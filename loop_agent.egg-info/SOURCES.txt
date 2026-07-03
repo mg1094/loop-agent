@@ -1,0 +1,15 @@
+pyproject.toml
+loop_agent/__init__.py
+loop_agent.egg-info/PKG-INFO
+loop_agent.egg-info/SOURCES.txt
+loop_agent.egg-info/dependency_links.txt
+loop_agent.egg-info/entry_points.txt
+loop_agent.egg-info/requires.txt
+loop_agent.egg-info/top_level.txt
+loop_agent/agent/__init__.py
+loop_agent/agent/frontmatter.py
+loop_agent/agent/tools.py
+loop_agent/providers/__init__.py
+loop_agent/tools/__init__.py
+tests/test_frontmatter.py
+tests/test_tools.py
