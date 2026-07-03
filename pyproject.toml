@@ -30,3 +30,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["loop_agent*"]
+
+[tool.setuptools.package-data]
+"loop_agent" = ["skills/**/SKILL.md"]
