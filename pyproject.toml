@@ -1,0 +1,31 @@
+[project]
+name = "loop-agent"
+version = "0.1.0"
+description = "Generic ReAct agent framework with skills and tools"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+readme = "README.md"
+dependencies = [
+    "rich>=13.0.0",
+    "langchain>=1.0.0,<2",
+    "langchain-openai>=1.0.0,<2",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.scripts]
+loop-agent = "loop_agent.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["loop_agent*"]
