@@ -28,6 +28,7 @@ Most agent frameworks are either too heavy (LangGraph complexity, vendor lock-in
 - 📝 **TraceWriter** — per-run JSONL trace under `runs/<run_id>/trace.jsonl`
 - 💾 **WorkspaceMemory** — per-run counters and state
 - ⌨️ **CLI** — `loop-agent run ...`, `loop-agent skills`, `loop-agent tools`
+- 🌐 **HTTP API** — FastAPI server exposing `/chat`, `/skills`, `/tools`, `/health`
 
 ## Install
 
@@ -58,6 +59,44 @@ loop-agent run "Use the echo tool to say hello"
 loop-agent skills
 loop-agent tools
 ```
+
+## HTTP API
+
+Start the server:
+
+```bash
+uvicorn loop_agent.api.app:app --host 0.0.0.0 --port 8000
+```
+
+Endpoints:
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# List available skills
+curl http://localhost:8000/skills
+
+# List available tools
+curl http://localhost:8000/tools
+
+# Run a single prompt
+curl -X POST http://localhost:8000/chat \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "Use the echo tool to say hello"}'
+```
+
+Response shape for `/chat`:
+```json
+{
+  "status": "success",
+  "content": "hello",
+  "run_id": "20260706_120000_a1b2c3",
+  "run_dir": "runs/20260706_120000_a1b2c3"
+}
+```
+
+`status` may be `success`, `empty`, `max_iterations`, `cancelled`, or `error`. Clients branch on `status`.
 
 ## Test
 
@@ -141,7 +180,6 @@ The agent can now call `load_skill("my-skill")` to read the full body.
 ## Roadmap
 
 - [ ] Streaming responses with proper SSE
-- [ ] FastAPI server entry
 - [ ] MCP server entry
 - [ ] Persistent memory across runs
 - [ ] Multi-agent orchestration
