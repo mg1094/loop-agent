@@ -9,6 +9,7 @@ from loop_agent.agent.loop import AgentLoop
 from loop_agent.agent.memory import WorkspaceMemory
 from loop_agent.agent.skills import SkillsLoader
 from loop_agent.providers.chat import ChatLLM
+from loop_agent.storage.session_store import SessionStore
 from loop_agent.tools import build_registry
 
 
@@ -22,18 +23,19 @@ def _load_env() -> None:
             break
 
 
-def _run_agent(user_message: str) -> Dict[str, Any]:
+def _run_agent(user_message: str, session_id: str = "") -> Dict[str, Any]:
     _load_env()
     skills_loader = SkillsLoader()
     registry = build_registry(skills_loader=skills_loader)
     llm = ChatLLM()
     memory = WorkspaceMemory()
-    loop = AgentLoop(registry, llm, memory)
-    return loop.run(user_message)
+    store = SessionStore()
+    loop = AgentLoop(registry, llm, memory, session_store=store)
+    return loop.run(user_message, session_id=session_id)
 
 
-def run_command(user_message: str) -> Dict[str, Any]:
-    return _run_agent(user_message)
+def run_command(user_message: str, session_id: str = "") -> Dict[str, Any]:
+    return _run_agent(user_message, session_id=session_id)
 
 
 def list_skills() -> str:

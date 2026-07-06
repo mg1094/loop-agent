@@ -12,3 +12,16 @@ def test_run_command_with_mock_loop(monkeypatch):
     result = run_command("hello")
     assert result["content"] == "Echo: hello"
     assert calls == ["hello"]
+
+
+def test_run_command_with_session_id(monkeypatch):
+    captured = []
+
+    def fake_run(user_message, session_id=""):
+        captured.append((user_message, session_id))
+        return {"status": "success", "content": "ok", "run_id": "r", "run_dir": "/tmp"}
+
+    monkeypatch.setattr("loop_agent.cli.commands._run_agent", fake_run)
+    result = run_command("hi", session_id="sess-1")
+    assert result["content"] == "ok"
+    assert captured == [("hi", "sess-1")]
