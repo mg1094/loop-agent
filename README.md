@@ -104,7 +104,7 @@ Response shape for `/chat`:
 pytest -v
 ```
 
-22 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, and CLI commands.
+35 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, and the HTTP API.
 
 ## Architecture
 
