@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 
@@ -42,7 +42,11 @@ def list_skills() -> str:
     return loader.get_descriptions()
 
 
-def list_tools() -> str:
+def list_tool_names() -> List[str]:
     _load_env()
     registry = build_registry()
-    return "\n".join(registry.tool_names)
+    return sorted(registry.tool_names)
+
+
+def list_tools() -> str:
+    return "\n".join(list_tool_names())
