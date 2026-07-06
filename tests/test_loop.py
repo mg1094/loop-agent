@@ -26,7 +26,7 @@ def test_loop_runs_tool_then_finishes(tmp_path):
     memory = WorkspaceMemory()
 
     llm = MagicMock(spec=ChatLLM)
-    llm.stream_chat.side_effect = [
+    llm.chat.side_effect = [
         LLMResponse(
             tool_calls=[ToolCallRequest(id="1", name="echo", arguments={"message": "hello"})],
             finish_reason="tool_calls",
@@ -39,4 +39,4 @@ def test_loop_runs_tool_then_finishes(tmp_path):
 
     assert result["status"] == "success"
     assert result["content"] == "Done"
-    assert llm.stream_chat.call_count == 2
+    assert llm.chat.call_count == 2

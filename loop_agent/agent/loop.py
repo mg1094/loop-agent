@@ -86,10 +86,9 @@ class AgentLoop:
                 if is_last:
                     trace.write({"type": "forced_text_only", "iter": iteration})
 
-                response = self.llm.stream_chat(
+                response = self.llm.chat(
                     messages,
                     tools=tool_defs,
-                    should_cancel=self._cancel_event.is_set,
                 )
 
                 if not response.has_tool_calls:
