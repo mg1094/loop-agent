@@ -35,3 +35,42 @@ def test_list_tools(monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["tools"] == ["echo", "load_skill", "read_file", "write_file"]
+
+
+def test_chat_success(monkeypatch):
+    def fake_run(prompt: str) -> dict:
+        return {
+            "status": "success",
+            "content": f"Echo: {prompt}",
+            "run_id": "r1",
+            "run_dir": "/tmp/r1",
+        }
+
+    monkeypatch.setattr("loop_agent.api.routes._run_agent", fake_run)
+    client = TestClient(create_app())
+    resp = client.post("/chat", json={"prompt": "hello"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["content"] == "Echo: hello"
+    assert body["run_id"] == "r1"
+    assert body["run_dir"] == "/tmp/r1"
+
+
+def test_chat_blank_prompt_returns_400(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "loop_agent.api.routes._run_agent",
+        lambda p: called.append(p) or {"status": "success", "content": "", "run_id": "r", "run_dir": "/tmp/r"},
+    )
+    client = TestClient(create_app())
+    resp = client.post("/chat", json={"prompt": "   "})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "prompt must not be blank"
+    assert called == []  # run_agent NOT called for blank prompt
+
+
+def test_chat_missing_prompt_returns_422():
+    client = TestClient(create_app())
+    resp = client.post("/chat", json={})
+    assert resp.status_code == 422
