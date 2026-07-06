@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from loop_agent.agent.loop import AgentLoop
 from loop_agent.agent.memory import WorkspaceMemory
 from loop_agent.agent.tools import BaseTool, ToolRegistry
 from loop_agent.providers.chat import ChatLLM, LLMResponse, ToolCallRequest
+from loop_agent.storage.session_store import SessionStore
 
 
 class EchoTool(BaseTool):
@@ -18,6 +20,19 @@ class EchoTool(BaseTool):
 
     def execute(self, *, message: str) -> str:
         return json.dumps({"result": message})
+
+
+class GreeterTool(BaseTool):
+    name = "greet"
+    description = "Greet"
+    parameters = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+
+    def execute(self, *, name: str) -> str:
+        return json.dumps({"result": f"hello {name}"})
 
 
 def test_loop_runs_tool_then_finishes(tmp_path):
@@ -40,3 +55,31 @@ def test_loop_runs_tool_then_finishes(tmp_path):
     assert result["status"] == "success"
     assert result["content"] == "Done"
     assert llm.chat.call_count == 2
+
+
+def test_loop_persists_messages_when_session_store_provided(tmp_path: Path):
+    registry = ToolRegistry()
+    memory = WorkspaceMemory()
+    store = SessionStore(tmp_path / "sessions.db")
+
+    llm = MagicMock(spec=ChatLLM)
+    llm.chat.side_effect = [
+        LLMResponse(content="first reply", finish_reason="stop"),
+        LLMResponse(content="second reply", finish_reason="stop"),
+    ]
+
+    loop = AgentLoop(registry, llm, memory, session_store=store)
+    r1 = loop.run("first prompt", session_id="sess1")
+    assert r1["status"] == "success"
+
+    r2 = loop.run("second prompt", session_id="sess1")
+    assert r2["status"] == "success"
+
+    # store should contain both user messages and both assistant replies
+    loaded = store.load_messages("sess1")
+    assert [m["content"] for m in loaded if m["role"] == "user"] == [
+        "first prompt", "second prompt"
+    ]
+    assert [m["content"] for m in loaded if m["role"] == "assistant"] == [
+        "first reply", "second reply"
+    ]
