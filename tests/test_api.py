@@ -38,7 +38,7 @@ def test_list_tools(monkeypatch):
 
 
 def test_chat_success(monkeypatch):
-    def fake_run(prompt: str) -> dict:
+    def fake_run(prompt: str, session_id: str = "") -> dict:
         return {
             "status": "success",
             "content": f"Echo: {prompt}",
@@ -55,6 +55,28 @@ def test_chat_success(monkeypatch):
     assert body["content"] == "Echo: hello"
     assert body["run_id"] == "r1"
     assert body["run_dir"] == "/tmp/r1"
+    assert body["session_id"] == ""
+
+
+def test_chat_with_session_id(monkeypatch):
+    captured = []
+
+    def fake_run(prompt: str, session_id: str = "") -> dict:
+        captured.append((prompt, session_id))
+        return {"status": "success", "content": "ok", "run_id": "r1", "run_dir": "/tmp/r1"}
+
+    monkeypatch.setattr("loop_agent.api.routes._run_agent", fake_run)
+    client = TestClient(create_app())
+    resp = client.post("/chat", json={"prompt": "hi", "session_id": "sess-1"})
+    assert resp.status_code == 200
+    assert resp.json()["session_id"] == "sess-1"
+    assert captured == [("hi", "sess-1")]
+
+
+def test_chat_session_id_too_long_returns_422():
+    client = TestClient(create_app())
+    resp = client.post("/chat", json={"prompt": "hi", "session_id": "x" * 257})
+    assert resp.status_code == 422
 
 
 def test_chat_blank_prompt_returns_400(monkeypatch):

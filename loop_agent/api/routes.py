@@ -34,10 +34,11 @@ def tools() -> ToolsResponse:
 def chat(req: ChatRequest) -> ChatResponse:
     if not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt must not be blank")
-    result = _run_agent(req.prompt)
+    result = _run_agent(req.prompt, session_id=req.session_id)
     return ChatResponse(
         status=result["status"],
         content=result["content"],
         run_id=result["run_id"],
         run_dir=result["run_dir"],
+        session_id=req.session_id,
     )
