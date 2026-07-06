@@ -1,7 +1,11 @@
+import tempfile
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from loop_agent.api.app import create_app
 from loop_agent import __version__
+from loop_agent.storage.session_store import SessionStore
 
 
 def test_health():
@@ -96,3 +100,45 @@ def test_chat_missing_prompt_returns_422():
     client = TestClient(create_app())
     resp = client.post("/chat", json={})
     assert resp.status_code == 422
+
+
+def test_get_session_returns_messages(tmp_path: Path, monkeypatch):
+    db = tmp_path / "sessions.db"
+    monkeypatch.setattr(
+        "loop_agent.api.routes.DEFAULT_DB_PATH", db
+    )
+    store = SessionStore(db)
+    store.save_turn("sess-x", [{"role": "user", "content": "remember me"}])
+    client = TestClient(create_app())
+    resp = client.get("/sessions/sess-x")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["session_id"] == "sess-x"
+    assert body["messages"][0]["content"] == "remember me"
+
+
+def test_get_unknown_session_returns_empty(monkeypatch):
+    monkeypatch.setattr(
+        "loop_agent.api.routes.DEFAULT_DB_PATH",
+        Path(tempfile.mkdtemp()) / "sessions.db",
+    )
+    client = TestClient(create_app())
+    resp = client.get("/sessions/never-existed")
+    assert resp.status_code == 200
+    assert resp.json() == {"session_id": "never-existed", "messages": []}
+
+
+def test_delete_session_removes_messages(tmp_path: Path, monkeypatch):
+    db = tmp_path / "sessions.db"
+    monkeypatch.setattr(
+        "loop_agent.api.routes.DEFAULT_DB_PATH", db
+    )
+    store = SessionStore(db)
+    store.save_turn("sess-del", [{"role": "user", "content": "x"}])
+    client = TestClient(create_app())
+    resp = client.delete("/sessions/sess-del")
+    assert resp.status_code == 200
+    assert resp.json() == {"session_id": "sess-del", "deleted": True}
+    # second delete is False
+    resp2 = client.delete("/sessions/sess-del")
+    assert resp2.json()["deleted"] is False

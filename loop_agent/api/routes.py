@@ -7,12 +7,19 @@ from loop_agent.api.schemas import (
     ChatRequest,
     ChatResponse,
     HealthResponse,
+    SessionDeleteResponse,
+    SessionMessagesResponse,
     SkillsResponse,
     ToolsResponse,
 )
 from loop_agent.cli.commands import _run_agent, list_skills, list_tool_names
+from loop_agent.storage.session_store import DEFAULT_DB_PATH, SessionStore
 
 router = APIRouter()
+
+
+def _store() -> SessionStore:
+    return SessionStore(DEFAULT_DB_PATH)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -42,3 +49,15 @@ def chat(req: ChatRequest) -> ChatResponse:
         run_dir=result["run_dir"],
         session_id=req.session_id,
     )
+
+
+@router.get("/sessions/{session_id}", response_model=SessionMessagesResponse)
+def get_session(session_id: str) -> SessionMessagesResponse:
+    messages = _store().load_messages(session_id)
+    return SessionMessagesResponse(session_id=session_id, messages=messages)
+
+
+@router.delete("/sessions/{session_id}", response_model=SessionDeleteResponse)
+def delete_session(session_id: str) -> SessionDeleteResponse:
+    deleted = _store().delete_session(session_id)
+    return SessionDeleteResponse(session_id=session_id, deleted=deleted)

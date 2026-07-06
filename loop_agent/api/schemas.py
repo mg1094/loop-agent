@@ -27,3 +27,13 @@ class ToolsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+
+class SessionMessagesResponse(BaseModel):
+    session_id: str
+    messages: list[dict]
+
+
+class SessionDeleteResponse(BaseModel):
+    session_id: str
+    deleted: bool
