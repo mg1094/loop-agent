@@ -9,4 +9,5 @@ __pycache__/
 .DS_Store
 .sessions/
 runs/
-docs/superpowers/sdd/
+docs/superpowers/sdd/reports/
+.superpowers/
