@@ -44,6 +44,20 @@ def run_command(user_message: str, session_id: str = "") -> Dict[str, Any]:
     return _run_agent(user_message, session_id=session_id)
 
 
+def _run_supervised(task: str, session_id: str = "") -> Dict[str, Any]:
+    _load_env()
+    llm = ChatLLM()
+    store = SessionStore()
+    from loop_agent.orchestration.supervisor import Supervisor
+
+    supervisor = Supervisor(llm=llm, session_store=store)
+    return supervisor.run(task, session_id=session_id)
+
+
+def run_supervised_command(task: str, session_id: str = "") -> Dict[str, Any]:
+    return _run_supervised(task, session_id=session_id)
+
+
 def list_skills() -> str:
     _load_env()
     loader = SkillsLoader()

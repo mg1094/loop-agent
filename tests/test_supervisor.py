@@ -116,3 +116,24 @@ def test_supervisor_run_delegates_research_then_writer(monkeypatch):
     assert result["session_id"] == "sess-1"
     assert len(research_tasks) == 1
     assert len(writer_tasks) == 1
+
+
+from loop_agent.cli import commands  # noqa: E402
+
+
+def test_run_supervised_command(monkeypatch):
+    def fake_run(task, session_id=""):
+        return {
+            "status": "success",
+            "content": f"report: {task}",
+            "run_id": "r1",
+            "run_dir": "/tmp/r1",
+            "session_id": session_id,
+        }
+
+    monkeypatch.setattr(
+        "loop_agent.cli.commands._run_supervised", fake_run
+    )
+    result = commands.run_supervised_command("topic X", session_id="s1")
+    assert result["content"] == "report: topic X"
+    assert result["session_id"] == "s1"
