@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![LangChain](https://img.shields.io/badge/LangChain-1.0+-green.svg)](https://python.langchain.com/)
-[![Tests](https://img.shields.io/badge/tests-80%20passed-brightgreen.svg)](#test)
+[![Tests](https://img.shields.io/badge/tests-89%20passed-brightgreen.svg)](#test)
 [![Code style](https://img.shields.io/badge/code%20style-clean-orange.svg)](#)
 
 A lightweight, provider-agnostic **ReAct agent framework** in Python — hand-written agent loop, auto-discovered tools, on-demand skill loading, and a pluggable LLM layer. Inspired by [Vibe-Trading](https://github.com), distilled down to the core building blocks for any agent use case, not just finance.
@@ -147,13 +147,38 @@ Events emitted (one `data: <json>\n\n` line each, envelope fields at top level):
 
 `final` always carries `status`, `content`, `run_id`, `run_dir`, and `session_id` — same shape as `POST /chat`'s JSON response. Session persistence behavior matches `/chat`: pass `session_id`, prior messages are loaded and the new turn is saved.
 
+## Multi-Agent Orchestration
+
+Run a supervised research → write workflow:
+
+```bash
+loop-agent run-supervised "Write a report on Alibaba's 2024 ESG progress" --session-id demo
+```
+
+The supervisor coordinates two workers:
+
+- `research` — searches the web with `web_search` (requires `BOCHA_API_KEY`)
+- `writer` — produces the final report with `read_file` / `write_file`
+
+The supervisor itself uses two tools: `delegate(task, to)` and `finalize(report)`. It always delegates research first, then writing, then returns the final report.
+
+HTTP API:
+
+```bash
+curl -X POST http://localhost:8000/chat/supervised \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "Write a report on Alibaba's 2024 ESG progress", "session_id": "demo"}'
+```
+
+Workers share the same `session_id`, so the full multi-agent trace is available via `GET /sessions/{session_id}`.
+
 ## Test
 
 ```bash
 pytest -v
 ```
 
-80 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, and the BoCha web search tool.
+89 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, the BoCha web search tool, and supervisor multi-agent orchestration.
 
 ## Architecture
 
@@ -230,7 +255,7 @@ The agent can now call `load_skill("my-skill")` to read the full body.
 
 - [x] Streaming responses with proper SSE
 - [ ] MCP server entry
-- [ ] Multi-agent orchestration
+- [x] Multi-agent orchestration
 
 ## License
 
