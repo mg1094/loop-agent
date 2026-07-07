@@ -70,6 +70,7 @@ class AgentLoop:
         user_message: str,
         history: Optional[List[Dict[str, Any]]] = None,
         session_id: str = "",
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._cancel_event.clear()
 
@@ -91,6 +92,8 @@ class AgentLoop:
                 prior = loaded
 
         messages = context.build_messages(user_message, history=prior)
+        if system_prompt is not None:
+            messages[0]["content"] = system_prompt
         # Capture user message in the persisted turn: the trailing user message
         # is appended by build_messages, so back up one slot.
         prefix_len = len(messages) - 1
