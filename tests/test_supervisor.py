@@ -137,3 +137,47 @@ def test_run_supervised_command(monkeypatch):
     result = commands.run_supervised_command("topic X", session_id="s1")
     assert result["content"] == "report: topic X"
     assert result["session_id"] == "s1"
+
+
+from fastapi.testclient import TestClient  # noqa: E402
+from loop_agent.api.app import create_app  # noqa: E402
+
+
+def test_chat_supervised_endpoint(monkeypatch):
+    def fake_run(task, session_id=""):
+        return {
+            "status": "success",
+            "content": f"supervised: {task}",
+            "run_id": "r1",
+            "run_dir": "/tmp/r1",
+        }
+
+    monkeypatch.setattr("loop_agent.api.routes._run_supervised", fake_run)
+    client = TestClient(create_app())
+    resp = client.post(
+        "/chat/supervised",
+        json={"prompt": "report on X", "session_id": "s1"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["content"] == "supervised: report on X"
+    assert body["session_id"] == "s1"
+
+
+def test_chat_supervised_blank_prompt_returns_400(monkeypatch):
+    called = []
+
+    def fake_run(task, session_id=""):
+        called.append(task)
+        return {
+            "status": "success",
+            "content": "",
+            "run_id": "r1",
+            "run_dir": "/tmp/r1",
+        }
+
+    monkeypatch.setattr("loop_agent.api.routes._run_supervised", fake_run)
+    client = TestClient(create_app())
+    resp = client.post("/chat/supervised", json={"prompt": "   "})
+    assert resp.status_code == 400
+    assert called == []

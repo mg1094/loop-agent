@@ -14,7 +14,7 @@ from loop_agent.api.schemas import (
     ToolsResponse,
 )
 from loop_agent.api.sse import stream_chat_events
-from loop_agent.cli.commands import _run_agent, list_skills, list_tool_names
+from loop_agent.cli.commands import _run_agent, _run_supervised, list_skills, list_tool_names
 from loop_agent.storage.session_store import DEFAULT_DB_PATH, SessionStore
 
 router = APIRouter()
@@ -77,4 +77,18 @@ def chat_stream(req: ChatRequest) -> StreamingResponse:
         stream_chat_events(req.prompt, session_id=req.session_id),
         media_type="text/event-stream",
         headers=headers,
+    )
+
+
+@router.post("/chat/supervised", response_model=ChatResponse)
+def chat_supervised(req: ChatRequest) -> ChatResponse:
+    if not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt must not be blank")
+    result = _run_supervised(req.prompt, session_id=req.session_id)
+    return ChatResponse(
+        status=result["status"],
+        content=result["content"],
+        run_id=result["run_id"],
+        run_dir=result["run_dir"],
+        session_id=req.session_id,
     )
