@@ -29,6 +29,7 @@ class DelegateTool(BaseTool):
     }
     repeatable = True
     is_readonly = True
+    skip_auto_register = True
 
     def __init__(self, dispatcher: Callable[[str, str], str]) -> None:
         self._dispatcher = dispatcher
@@ -53,6 +54,7 @@ class FinalizeTool(BaseTool):
     }
     repeatable = False
     is_readonly = True
+    skip_auto_register = True
 
     def __init__(self, callback: Callable[[str], None]) -> None:
         self._callback = callback

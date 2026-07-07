@@ -53,6 +53,8 @@ def build_registry(
     registry = ToolRegistry()
     for cls in _discover_subclasses():
         try:
+            if getattr(cls, "skip_auto_register", False):
+                continue
             if hasattr(cls, "check_available") and not cls.check_available():
                 logger.info("Tool %s unavailable, skipping", cls.name)
                 continue

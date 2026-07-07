@@ -14,6 +14,7 @@ class BaseTool(ABC):
     parameters: Dict[str, Any] = {}
     repeatable: bool = True
     is_readonly: bool = True
+    skip_auto_register: bool = False
 
     @classmethod
     def check_available(cls) -> bool:
