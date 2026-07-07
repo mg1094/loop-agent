@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from loop_agent.agent.context import ContextBuilder
 from loop_agent.agent.memory import WorkspaceMemory
+from loop_agent.agent.skills import SkillsLoader
 from loop_agent.agent.tools import ToolRegistry
 from loop_agent.agent.trace import TraceWriter
 from loop_agent.agent.truncation import truncate_messages
@@ -37,6 +38,7 @@ class AgentLoop:
         event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         max_iterations: int = MAX_ITERATIONS,
         session_store: Optional["SessionStore"] = None,
+        skills_loader: Optional[SkillsLoader] = None,
     ) -> None:
         self.registry = registry
         self.llm = llm
@@ -45,6 +47,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self._cancel_event = threading.Event()
         self.session_store = session_store
+        self._skills_loader = skills_loader
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -80,7 +83,11 @@ class AgentLoop:
         run_dir.mkdir(parents=True, exist_ok=True)
         self.memory.run_dir = str(run_dir)
 
-        context = ContextBuilder(self.registry, self.memory)
+        context = ContextBuilder(
+            self.registry,
+            self.memory,
+            self._skills_loader or SkillsLoader(),
+        )
 
         prior: List[Dict[str, Any]] = []
         if history:
