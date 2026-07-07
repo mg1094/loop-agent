@@ -98,13 +98,37 @@ Response shape for `/chat`:
 
 `status` may be `success`, `empty`, `max_iterations`, `cancelled`, or `error`. Clients branch on `status`.
 
+## Sessions
+
+Pass `session_id` on `/chat` to keep conversation history across requests. The agent sees prior user / assistant / tool messages from the same session.
+
+```bash
+# First turn
+curl -X POST http://localhost:8000/chat \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "echo hello", "session_id": "demo"}'
+
+# Second turn — agent sees the first prompt in context
+curl -X POST http://localhost:8000/chat \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "now echo world", "session_id": "demo"}'
+
+# Inspect
+curl http://localhost:8000/sessions/demo
+
+# Delete
+curl -X DELETE http://localhost:8000/sessions/demo
+```
+
+Sessions are stored in a local SQLite database at `<cwd>/.sessions/sessions.db`. Histories beyond 20 messages are truncated with a sentinel marker — older context is dropped, not summarized. Omit `session_id` for stateless single-turn requests.
+
 ## Test
 
 ```bash
 pytest -v
 ```
 
-35 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, and the HTTP API.
+55 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, and message truncation.
 
 ## Architecture
 
@@ -181,7 +205,6 @@ The agent can now call `load_skill("my-skill")` to read the full body.
 
 - [ ] Streaming responses with proper SSE
 - [ ] MCP server entry
-- [ ] Persistent memory across runs
 - [ ] Multi-agent orchestration
 
 ## License
