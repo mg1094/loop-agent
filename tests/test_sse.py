@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -100,3 +101,112 @@ def test_streaming_runner_returns_full_dict(monkeypatch):
         f"Expected streaming-generated run_id format, got {out['run_id']!r}"
     )
     assert out["run_dir"] == "/tmp/y"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: async SSE event generator
+# ---------------------------------------------------------------------------
+from loop_agent.api.sse import stream_chat_events  # noqa: E402
+
+
+def _drain_async(gen):
+    """Helper: collect all strings from an async generator."""
+    return asyncio.run(_collect(gen))
+
+
+async def _collect(gen):
+    out = []
+    async for item in gen:
+        out.append(item)
+    return out
+
+
+def test_stream_emits_run_start_then_final_then_done(monkeypatch):
+    # Patch _run_agent_streaming to push one tool_result and then done,
+    # bypassing the real AgentLoop. Use the run_id passed by the caller so
+    # events correlate with stream_chat_events' my_run_id.
+    import queue as _q
+
+    from loop_agent.api import sse as sse_mod
+
+    monkeypatch.setattr("loop_agent.api.sse.event_queue", _q.Queue())
+
+    def fake_streaming(prompt, session_id="", run_id="rid1", **kwargs):
+        sse_mod.event_queue.put((run_id, "tool_result", {"name": "echo", "result": "hi"}))
+        sse_mod.event_queue.put((run_id, "__done__", {"status": "success", "content": "hi", "run_id": run_id, "run_dir": "/tmp"}))
+        return {"status": "success", "content": "hi", "run_id": run_id, "run_dir": "/tmp"}
+
+    monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
+
+    events_text = _drain_async(stream_chat_events("hello", session_id=""))
+
+    # Parse events
+    parsed = []
+    for chunk in events_text:
+        for line in chunk.split("\n"):
+            if line.startswith("data:"):
+                parsed.append(json.loads(line[len("data:"):].strip()))
+
+    types = [e["type"] for e in parsed]
+    assert types[0] == "run_start"
+    assert "tool_result" in types
+    assert types[-1] == "final"
+    # final has session_id echoed
+    final = parsed[-1]
+    assert final["status"] == "success"
+    assert final["session_id"] == ""  # no session_id passed
+
+
+def test_stream_echoes_session_id_in_final(monkeypatch):
+    import queue as _q
+
+    from loop_agent.api import sse as sse_mod
+
+    monkeypatch.setattr("loop_agent.api.sse.event_queue", _q.Queue())
+
+    def fake_streaming(prompt, session_id="", run_id="rid2", **kwargs):
+        sse_mod.event_queue.put((run_id, "__done__", {"status": "success", "content": "x", "run_id": run_id, "run_dir": "/tmp"}))
+        return {"status": "success", "content": "x", "run_id": run_id, "run_dir": "/tmp"}
+
+    monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
+
+    events_text = _drain_async(stream_chat_events("hi", session_id="sess-42"))
+    parsed = []
+    for chunk in events_text:
+        for line in chunk.split("\n"):
+            if line.startswith("data:"):
+                parsed.append(json.loads(line[len("data:"):].strip()))
+
+    final = parsed[-1]
+    assert final["type"] == "final"
+    assert final["session_id"] == "sess-42"
+    # run_start should also echo session_id
+    assert parsed[0]["type"] == "run_start"
+    assert parsed[0]["session_id"] == "sess-42"
+
+
+def test_stream_emits_error_event_when_worker_raises(monkeypatch):
+    import queue as _q
+
+    from loop_agent.api import sse as sse_mod
+
+    monkeypatch.setattr("loop_agent.api.sse.event_queue", _q.Queue())
+
+    def fake_streaming(prompt, session_id="", run_id="rid3", **kwargs):
+        sse_mod.event_queue.put((run_id, "__done__", {"status": "error", "content": "boom", "run_id": run_id, "run_dir": ""}))
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
+
+    events_text = _drain_async(stream_chat_events("hi", session_id="err-sess"))
+    parsed = []
+    for chunk in events_text:
+        for line in chunk.split("\n"):
+            if line.startswith("data:"):
+                parsed.append(json.loads(line[len("data:"):].strip()))
+
+    assert parsed[0]["type"] == "run_start"
+    assert parsed[-1]["type"] == "error"
+    assert parsed[-1]["status"] == "error"
+    assert parsed[-1]["message"] == "boom"
+    assert parsed[-1]["session_id"] == "err-sess"
