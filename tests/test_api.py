@@ -117,10 +117,10 @@ def test_get_session_returns_messages(tmp_path: Path, monkeypatch):
     assert body["messages"][0]["content"] == "remember me"
 
 
-def test_get_unknown_session_returns_empty(monkeypatch):
+def test_get_unknown_session_returns_empty(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "loop_agent.api.routes.DEFAULT_DB_PATH",
-        Path(tempfile.mkdtemp()) / "sessions.db",
+        tmp_path / "sessions.db",
     )
     client = TestClient(create_app())
     resp = client.get("/sessions/never-existed")

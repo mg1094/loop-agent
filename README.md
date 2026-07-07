@@ -92,7 +92,8 @@ Response shape for `/chat`:
   "status": "success",
   "content": "hello",
   "run_id": "20260706_120000_a1b2c3",
-  "run_dir": "runs/20260706_120000_a1b2c3"
+  "run_dir": "runs/20260706_120000_a1b2c3",
+  "session_id": ""
 }
 ```
 
