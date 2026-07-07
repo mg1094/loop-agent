@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![LangChain](https://img.shields.io/badge/LangChain-1.0+-green.svg)](https://python.langchain.com/)
-[![Tests](https://img.shields.io/badge/tests-22%20passed-brightgreen.svg)](#test)
+[![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen.svg)](#test)
 [![Code style](https://img.shields.io/badge/code%20style-clean-orange.svg)](#)
 
 A lightweight, provider-agnostic **ReAct agent framework** in Python — hand-written agent loop, auto-discovered tools, on-demand skill loading, and a pluggable LLM layer. Inspired by [Vibe-Trading](https://github.com), distilled down to the core building blocks for any agent use case, not just finance.
@@ -123,13 +123,34 @@ curl -X DELETE http://localhost:8000/sessions/demo
 
 Sessions are stored in a local SQLite database at `<cwd>/.sessions/sessions.db`. Histories beyond 20 messages are truncated with a sentinel marker — older context is dropped, not summarized. Omit `session_id` for stateless single-turn requests.
 
+## Streaming
+
+`/chat/stream` returns `text/event-stream` so clients see per-iteration progress instead of waiting for the full run.
+
+```bash
+curl -N -X POST http://localhost:8000/chat/stream \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "Use the echo tool to say hello", "session_id": "demo"}'
+```
+
+Events emitted (one `data: <json>\n\n` line each, envelope fields at top level):
+
+| `type`            | When                                |
+|-------------------|-------------------------------------|
+| `run_start`       | First event                         |
+| `tool_result`     | Each tool call finishes             |
+| `final`           | Run finished — mirrors `/chat`      |
+| `error`           | Only on unrecoverable exception     |
+
+`final` always carries `status`, `content`, `run_id`, `run_dir`, and `session_id` — same shape as `POST /chat`'s JSON response. Session persistence behavior matches `/chat`: pass `session_id`, prior messages are loaded and the new turn is saved.
+
 ## Test
 
 ```bash
 pytest -v
 ```
 
-55 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, and message truncation.
+69 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, and streaming SSE.
 
 ## Architecture
 
@@ -204,7 +225,7 @@ The agent can now call `load_skill("my-skill")` to read the full body.
 
 ## Roadmap
 
-- [ ] Streaming responses with proper SSE
+- [x] Streaming responses with proper SSE
 - [ ] MCP server entry
 - [ ] Multi-agent orchestration
 
