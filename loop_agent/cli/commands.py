@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from dotenv import load_dotenv
 
@@ -23,13 +23,19 @@ def _load_env() -> None:
             break
 
 
-def _run_agent(user_message: str, session_id: str = "") -> Dict[str, Any]:
+def _build_streaming_components() -> Tuple[Any, ChatLLM, WorkspaceMemory, SessionStore]:
+    """Build the agent's collaborators. Shared by CLI + streaming SSE path."""
     _load_env()
     skills_loader = SkillsLoader()
     registry = build_registry(skills_loader=skills_loader)
     llm = ChatLLM()
     memory = WorkspaceMemory()
     store = SessionStore()
+    return registry, llm, memory, store
+
+
+def _run_agent(user_message: str, session_id: str = "") -> Dict[str, Any]:
+    registry, llm, memory, store = _build_streaming_components()
     loop = AgentLoop(registry, llm, memory, session_store=store)
     return loop.run(user_message, session_id=session_id)
 
