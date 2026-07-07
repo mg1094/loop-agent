@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from loop_agent import __version__
 from loop_agent.api.schemas import (
@@ -12,6 +13,7 @@ from loop_agent.api.schemas import (
     SkillsResponse,
     ToolsResponse,
 )
+from loop_agent.api.sse import stream_chat_events
 from loop_agent.cli.commands import _run_agent, list_skills, list_tool_names
 from loop_agent.storage.session_store import DEFAULT_DB_PATH, SessionStore
 
@@ -61,3 +63,18 @@ def get_session(session_id: str) -> SessionMessagesResponse:
 def delete_session(session_id: str) -> SessionDeleteResponse:
     deleted = _store().delete_session(session_id)
     return SessionDeleteResponse(session_id=session_id, deleted=deleted)
+
+
+@router.post("/chat/stream")
+def chat_stream(req: ChatRequest) -> StreamingResponse:
+    if not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt must not be blank")
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(
+        stream_chat_events(req.prompt, session_id=req.session_id),
+        media_type="text/event-stream",
+        headers=headers,
+    )

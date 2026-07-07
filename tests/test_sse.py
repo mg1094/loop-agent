@@ -210,3 +210,116 @@ def test_stream_emits_error_event_when_worker_raises(monkeypatch):
     assert parsed[-1]["status"] == "error"
     assert parsed[-1]["message"] == "boom"
     assert parsed[-1]["session_id"] == "err-sess"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: POST /chat/stream route
+# ---------------------------------------------------------------------------
+from fastapi.testclient import TestClient  # noqa: E402
+
+from loop_agent.api.app import create_app  # noqa: E402
+
+
+def test_stream_route_returns_event_stream_content_type(monkeypatch):
+    # Replace stream_chat_events with a tiny async generator that yields two events.
+    from loop_agent.api import sse as sse_mod
+
+    async def tiny_gen(prompt, session_id=""):
+        yield sse_mod.format_sse_event(
+            event_type="run_start",
+            seq=1,
+            ts="2026-07-07T00:00:00Z",
+            run_id="rid",
+            data={"prompt": prompt, "session_id": session_id},
+        )
+        yield sse_mod.format_sse_event(
+            event_type="final",
+            seq=2,
+            ts="2026-07-07T00:00:01Z",
+            run_id="rid",
+            data={
+                "status": "success",
+                "content": "x",
+                "run_id": "rid",
+                "run_dir": "/tmp",
+                "session_id": session_id,
+            },
+        )
+
+    monkeypatch.setattr("loop_agent.api.routes.stream_chat_events", tiny_gen)
+    client = TestClient(create_app())
+    resp = client.post("/chat/stream", json={"prompt": "hi"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    body = resp.text
+    assert "data:" in body
+    assert '"type": "run_start"' in body
+    assert '"type": "final"' in body
+
+
+def test_stream_route_propagates_session_id(monkeypatch):
+    from loop_agent.api import sse as sse_mod
+
+    captured = []
+
+    async def tiny_gen(prompt, session_id=""):
+        captured.append((prompt, session_id))
+        yield sse_mod.format_sse_event(
+            event_type="final",
+            seq=1,
+            ts="2026-07-07T00:00:00Z",
+            run_id="rid",
+            data={
+                "status": "success",
+                "content": "x",
+                "run_id": "rid",
+                "run_dir": "/tmp",
+                "session_id": session_id,
+            },
+        )
+
+    monkeypatch.setattr("loop_agent.api.routes.stream_chat_events", tiny_gen)
+    client = TestClient(create_app())
+    resp = client.post(
+        "/chat/stream", json={"prompt": "hi", "session_id": "sess-stream"}
+    )
+    assert resp.status_code == 200
+    assert captured == [("hi", "sess-stream")]
+    assert '"session_id": "sess-stream"' in resp.text
+
+
+def test_stream_blank_prompt_returns_400(monkeypatch):
+    called = []
+    from loop_agent.api import sse as sse_mod
+
+    async def gen(prompt, session_id=""):
+        called.append(prompt)
+        yield sse_mod.format_sse_event(
+            "run_start",
+            1,
+            "2026-07-07T00:00:00Z",
+            "rid",
+            {"prompt": prompt, "session_id": session_id},
+        )
+
+    monkeypatch.setattr("loop_agent.api.routes.stream_chat_events", gen)
+    client = TestClient(create_app())
+    resp = client.post("/chat/stream", json={"prompt": "   "})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "prompt must not be blank"
+    assert called == []  # generator NOT invoked for blank prompt
+
+
+def test_stream_missing_prompt_returns_422():
+    client = TestClient(create_app())
+    resp = client.post("/chat/stream", json={})
+    assert resp.status_code == 422
+
+
+def test_stream_oversized_session_id_returns_422():
+    client = TestClient(create_app())
+    resp = client.post(
+        "/chat/stream", json={"prompt": "hi", "session_id": "x" * 257}
+    )
+    assert resp.status_code == 422
+
