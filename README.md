@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![LangChain](https://img.shields.io/badge/LangChain-1.0+-green.svg)](https://python.langchain.com/)
-[![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen.svg)](#test)
+[![Tests](https://img.shields.io/badge/tests-80%20passed-brightgreen.svg)](#test)
 [![Code style](https://img.shields.io/badge/code%20style-clean-orange.svg)](#)
 
 A lightweight, provider-agnostic **ReAct agent framework** in Python — hand-written agent loop, auto-discovered tools, on-demand skill loading, and a pluggable LLM layer. Inspired by [Vibe-Trading](https://github.com), distilled down to the core building blocks for any agent use case, not just finance.
@@ -28,7 +28,8 @@ Most agent frameworks are either too heavy (LangGraph complexity, vendor lock-in
 - 📝 **TraceWriter** — per-run JSONL trace under `runs/<run_id>/trace.jsonl`
 - 💾 **WorkspaceMemory** — per-run counters and state
 - ⌨️ **CLI** — `loop-agent run ...`, `loop-agent skills`, `loop-agent tools`
-- 🌐 **HTTP API** — FastAPI server exposing `/chat`, `/skills`, `/tools`, `/health`
+- 🌐 **HTTP API** — FastAPI server exposing `/chat`, `/chat/stream`, `/skills`, `/tools`, `/health`
+- 🔍 **Web search** — built-in `web_search` tool powered by BoCha AI (opt-in via `BOCHA_API_KEY`)
 
 ## Install
 
@@ -48,6 +49,7 @@ LANGCHAIN_PROVIDER=dashscope
 LANGCHAIN_MODEL_NAME=qwen-plus-latest
 DASHSCOPE_API_KEY=sk-your-key
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+BOCHA_API_KEY=your-bocha-api-key  # optional, enables web_search tool
 ```
 
 Supported providers: `openai`, `deepseek`, `dashscope`/`qwen`, `moonshot`, `gemini`, `groq`, `ollama`.
@@ -151,7 +153,7 @@ Events emitted (one `data: <json>\n\n` line each, envelope fields at top level):
 pytest -v
 ```
 
-70 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, and streaming SSE.
+80 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, and the BoCha web search tool.
 
 ## Architecture
 
