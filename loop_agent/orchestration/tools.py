@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any, Callable
 
 from loop_agent.agent.tools import BaseTool
@@ -32,6 +33,11 @@ class DelegateTool(BaseTool):
     skip_auto_register = True
 
     def __init__(self, dispatcher: Callable[[str, str], str]) -> None:
+        warnings.warn(
+            "DelegateTool is deprecated; configure workflows via Supervisor(workers, workflow) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._dispatcher = dispatcher
 
     def execute(self, *, task: str, to: str, **kwargs: Any) -> str:
@@ -57,6 +63,11 @@ class FinalizeTool(BaseTool):
     skip_auto_register = True
 
     def __init__(self, callback: Callable[[str], None]) -> None:
+        warnings.warn(
+            "FinalizeTool is deprecated; the Supervisor captures the final report implicitly after the last workflow step.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._callback = callback
 
     def execute(self, *, report: str, **kwargs: Any) -> str:
