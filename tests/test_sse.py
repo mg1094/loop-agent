@@ -75,6 +75,31 @@ def test_streaming_runner_emits_tool_result_events(monkeypatch):
     assert "tool_result" in types
 
 
+def test_streaming_runner_emits_iteration_start(monkeypatch):
+    """AgentLoop iteration_start events are forwarded through the streaming runner."""
+    from loop_agent.api import sse as sse_mod
+    from loop_agent.api.sse import _run_agent_streaming
+
+    def fake_loop_run(self, user_message, history=None, session_id=""):
+        self._emit("iteration_start", {"iteration": 1})
+        return {"status": "success", "content": "done", "run_id": "fake-rid", "run_dir": "/tmp/x"}
+
+    monkeypatch.setattr("loop_agent.api.sse.AgentLoop.run", fake_loop_run)
+    monkeypatch.setattr(
+        "loop_agent.api.sse._build_streaming_components",
+        lambda: (None, None, None, None),
+    )
+
+    result = _run_agent_streaming("hello", session_id="")
+    assert result["status"] == "success"
+
+    drained = []
+    while not sse_mod.event_queue.empty():
+        drained.append(sse_mod.event_queue.get_nowait())
+    iter_events = [d for (_rid, t, d) in drained if t == "iteration_start" and _rid == result["run_id"]]
+    assert iter_events == [{"iteration": 1}]
+
+
 def test_streaming_runner_returns_full_dict(monkeypatch):
     from loop_agent.api.sse import _run_agent_streaming
 

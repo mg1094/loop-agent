@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![LangChain](https://img.shields.io/badge/LangChain-1.0+-green.svg)](https://python.langchain.com/)
-[![Tests](https://img.shields.io/badge/tests-69%20passed-brightgreen.svg)](#test)
+[![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen.svg)](#test)
 [![Code style](https://img.shields.io/badge/code%20style-clean-orange.svg)](#)
 
 A lightweight, provider-agnostic **ReAct agent framework** in Python — hand-written agent loop, auto-discovered tools, on-demand skill loading, and a pluggable LLM layer. Inspired by [Vibe-Trading](https://github.com), distilled down to the core building blocks for any agent use case, not just finance.
@@ -138,6 +138,7 @@ Events emitted (one `data: <json>\n\n` line each, envelope fields at top level):
 | `type`            | When                                |
 |-------------------|-------------------------------------|
 | `run_start`       | First event                         |
+| `iteration_start` | Each ReAct loop iteration begins    |
 | `tool_result`     | Each tool call finishes             |
 | `final`           | Run finished — mirrors `/chat`      |
 | `error`           | Only on unrecoverable exception     |
@@ -150,7 +151,7 @@ Events emitted (one `data: <json>\n\n` line each, envelope fields at top level):
 pytest -v
 ```
 
-69 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, and streaming SSE.
+70 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, and streaming SSE.
 
 ## Architecture
 

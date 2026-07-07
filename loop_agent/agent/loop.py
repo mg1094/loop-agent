@@ -112,6 +112,7 @@ class AgentLoop:
 
                 iteration += 1
                 logger.info("ReAct iteration %d/%d", iteration, self.max_iterations)
+                self._emit("iteration_start", {"iteration": iteration})
 
                 is_last = iteration == self.max_iterations
                 tool_defs = None if is_last else self.registry.get_definitions()
