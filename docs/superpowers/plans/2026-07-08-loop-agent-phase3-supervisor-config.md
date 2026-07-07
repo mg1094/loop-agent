@@ -13,7 +13,7 @@
 - Spec: `docs/superpowers/specs/2026-07-08-loop-agent-phase3-supervisor-config-design.md`
 - Python interpreter: `.venv/Scripts/python.exe` (Windows) — always invoke via this, never assume `python`.
 - Backwards compatibility: existing **89 tests must continue to pass unmodified**. The 10 tests in `tests/test_supervisor.py` MUST NOT be modified — they are the backward-compat contract.
-- New tests must drive the total to **≥ 105 passing** (89 → +16 = 105).
+- New tests must drive the total to **≥ 106 passing** (89 → +17 = 106).
 - **TDD strictly enforced**: every implementation step is preceded by a failing test step. Run + observe the FAIL before writing the implementation.
 - **Frequent commits**: at minimum one commit per task. Within a task, commit whenever a coherent sub-change is green.
 - `git status` before every commit — `.env`, `.sessions/`, `.venv/`, `runs/` must NEVER be staged.
@@ -744,12 +744,34 @@ def test_supervisor_template_unknown_placeholder_raises_supervisor_config_error(
     sup = Supervisor(llm=_NoopLLM(), workers=workers, workflow=steps)
     with pytest.raises(SupervisorConfigError):
         sup.run(task="X", session_id="")
+
+
+def test_supervisor_event_callback_receives_workflow_events(monkeypatch):
+    """Verify event_callback is threaded into worker AgentLoops AND used by Supervisor._emit."""
+    monkeypatch.setattr("loop_agent.orchestration.supervisor.AgentLoop", _FakeAgentLoop)
+    workers = [WorkerSpec(name="r", tools=[])]
+    steps = [
+        WorkflowStep("r", "step1 {task}"),
+        WorkflowStep("r", "step2 {prev_output}"),
+    ]
+    received: list[tuple[str, dict]] = []
+
+    def cb(event_type, data):
+        received.append((event_type, data))
+
+    sup = Supervisor(llm=_NoopLLM(), workers=workers, workflow=steps, event_callback=cb)
+    sup.run(task="hi", session_id="")
+    types = {t for t, _ in received}
+    assert {"workflow_step_start", "workflow_step_end"}.issubset(types)
+    # Two start + two end events = four workflow events total.
+    workflow_events = [r for r in received if r[0].startswith("workflow_")]
+    assert len(workflow_events) == 4
 ```
 
 - [ ] **Step 2: Run new tests, confirm failure**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_supervisor.py -v`
-Expected: 10 passed (existing — UNTOUCHED), 6 FAILED. The 6 new tests should fail with `ImportError` or `AttributeError` since the new public symbols don't exist yet.
+Expected: 10 passed (existing — UNTOUCHED), 7 FAILED. The 7 new tests should fail with `ImportError` or `AttributeError` since the new public symbols don't exist yet.
 
 - [ ] **Step 3: Rewrite `Supervisor`**
 
@@ -844,6 +866,7 @@ class Supervisor:
         session_store: Optional[SessionStore] = None,
         workers: Optional[List[WorkerSpec]] = None,
         workflow: Optional[List[WorkflowStep]] = None,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         if workers is not None and len(workers) == 0:
             raise ValueError("Supervisor.workers must contain at least one WorkerSpec")
@@ -854,6 +877,7 @@ class Supervisor:
         self.workflow: List[WorkflowStep] = list(workflow) if workflow is not None else list(_DEFAULT_WORKFLOW)
         self.llm: ChatLLM = llm or ChatLLM()
         self.session_store: Optional[SessionStore] = session_store
+        self._event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = event_callback
 
         # Eager validation so misconfigurations fail at construction time.
         names = [w.name for w in self._workers_specs]
@@ -868,25 +892,10 @@ class Supervisor:
                     f"WorkflowStep references unknown worker {step.worker!r}; "
                     f"known workers: {sorted(names_set)}"
                 )
-        for spec in self._workers_specs:
-            for tool_name in spec.tools:
-                if tool_name not in {t.name for t in type(self)._full_registry_iter()}:
-                    raise ValueError(
-                        f"WorkerSpec({spec.name!r}) references unknown tool {tool_name!r}"
-                    )
 
         self.worker_loops: Dict[str, AgentLoop] = self._build_workers()
 
     # -- helpers --------------------------------------------------------------
-
-    @staticmethod
-    def _full_registry_iter():
-        """Yield every tool class once per call. Cached lazily to avoid
-        repeating the disk scan when ``Supervisor`` is reconstructed.
-        """
-        from loop_agent.tools import build_registry
-        registry = build_registry()
-        return list(registry.get_definitions())  # exercises tool lookup
 
     def _build_worker_skills_loader(self, allowed: List[str]) -> SkillsLoader:
         full = SkillsLoader()
@@ -916,6 +925,7 @@ class Supervisor:
                 self.llm,
                 memory=WorkspaceMemory(),
                 session_store=self.session_store,
+                event_callback=self._event_callback,
                 skills_loader=skills_loader,
                 max_iterations=spec.max_iterations,
             )
@@ -990,18 +1000,21 @@ class Supervisor:
     # -- event bridge ---------------------------------------------------------
 
     def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
-        """Forward workflow events through any registered worker callback."""
-        worker_callbacks = {
-            loop.kwargs.get("event_callback")
-            for loop in self.worker_loops.values()
-            if hasattr(loop, "kwargs")
-        }
-        for cb in worker_callbacks:
-            if cb:
-                try:
-                    cb(event_type, data)
-                except Exception:  # noqa: BLE001 - never break the loop on a sink error
-                    logger.debug("workflow event sink raised", exc_info=True)
+        """Forward workflow events through the user-supplied callback.
+
+        ``event_callback`` is threaded down into each worker ``AgentLoop`` at
+        construction time, so the same sink sees both per-iteration events
+        from inside workers and the supervisor-level
+        ``workflow_step_start`` / ``workflow_step_end`` /
+        ``supervisor_step_warning`` events emitted here.
+        """
+        cb = self._event_callback
+        if cb is None:
+            return
+        try:
+            cb(event_type, data)
+        except Exception:  # noqa: BLE001 - never break the loop on a sink error
+            logger.debug("supervisor event sink raised", exc_info=True)
 ```
 
 Note on `_full_registry_iter`: it’s defined as a static helper but **not
@@ -1105,7 +1118,12 @@ class FinalizeTool(BaseTool):
 
 In `README.md`:
 - Bump the test-count badge from `89%20passed` to `105%20passed`.
+- Bump the test-count badge from `89%20passed` to `106%20passed`.
 - In the "Multi-Agent Orchestration" section, add one line at the end:
+
+  ```markdown
+  Custom workflows: pass `WorkerSpec` and `WorkflowStep` to `Supervisor(...)`. See `docs/superpowers/specs/2026-07-08-loop-agent-phase3-supervisor-config-design.md` for the contract.
+  ```
 
   ```markdown
   Custom workflows: pass `WorkerSpec` and `WorkflowStep` to `Supervisor(...)`. See `docs/superpowers/specs/2026-07-08-loop-agent-phase3-supervisor-config-design.md` for the contract.
@@ -1114,12 +1132,12 @@ In `README.md`:
 - [ ] **Step 7: Run new tests, confirm pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_supervisor.py -v`
-Expected: 16 passed (10 existing untouched + 6 new). If existing 10 break, revert and inspect — backward-compat regression is a blocking defect.
+Expected: 17 passed (10 existing untouched + 7 new). If existing 10 break, revert and inspect — backward-compat regression is a blocking defect.
 
 - [ ] **Step 8: Run full suite, confirm pass**
 
 Run: `.venv/Scripts/python.exe -m pytest -v`
-Expected: 105 passed.
+Expected: 106 passed.
 
 - [ ] **Step 9: Commit**
 
@@ -1154,7 +1172,7 @@ Open `docs/superpowers/sdd/progress.md` (or create it if missing — past projec
 - Plan: docs/superpowers/plans/2026-07-08-loop-agent-phase3-supervisor-config.md
 - Spec: docs/superpowers/specs/2026-07-08-loop-agent-phase3-supervisor-config-design.md
 - Status: complete
-- Tests: 105/105 passing
+- Tests: 106/106 passing
 ```
 
 - [ ] **Step 3: Commit**
@@ -1227,7 +1245,7 @@ If network blocked, report to user. Don't block completion on push.
 | `FilteredSkillsLoader` integration inside `_build_workers` | T4 |
 | `DeprecationWarning` on `DelegateTool` + `FinalizeTool` | T4 |
 | README test-count bump + pointer to spec | T4 + T5 |
-| 14+ new tests across WorkerSpec / Filtered / Supervisor | T1 (3) + T2 (5) + T3 (2) + T4 (6) = 16 |
+| 14+ new tests across WorkerSpec / Filtered / Supervisor | T1 (3) + T2 (5) + T3 (2) + T4 (7) = 17 |
 | Backward-compat — existing 10 supervisor tests untouched | T4 (`Step 7` explicitly checks) |
 
 **Placeholder scan:** No "TBD" / "TODO" / "implement later" markers in any code block. All step code is concrete and runnable.
