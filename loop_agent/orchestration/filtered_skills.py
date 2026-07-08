@@ -14,7 +14,7 @@ exists do NOT leak through, which keeps worker scope stable across a run.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Set
+from typing import Iterable, List, Optional, Set
 
 from loop_agent.agent.skills import Skill, SkillsLoader
 

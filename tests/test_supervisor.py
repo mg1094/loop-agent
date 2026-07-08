@@ -201,6 +201,11 @@ class _FakeAgentLoop:
     Nth call's arguments rather than only whatever call happened last.
     Each test that monkeypatches this class MUST reset ``_FakeAgentLoop.calls = []``
     at the start so test ordering does not leak state.
+
+    The fake also threads ``event_callback`` through ``__init__`` (matching
+    the real ``AgentLoop`` signature) and emits a synthetic worker event from
+    inside ``run()`` so tests can verify the Supervisor hands the callback
+    down to workers end-to-end.
     """
 
     calls: list = []
@@ -209,6 +214,7 @@ class _FakeAgentLoop:
         self.registry = registry
         self.tool_names = registry.tool_names
         self.kwargs = kwargs
+        self.event_callback = kwargs.get("event_callback")
 
     def run(self, user_message, history=None, session_id="", system_prompt=None):
         type(self).calls.append({
@@ -216,6 +222,13 @@ class _FakeAgentLoop:
             "session_id": session_id,
             "system_prompt": system_prompt,
         })
+        # Simulate the real AgentLoop emitting a worker-side event so callers
+        # can verify the Supervisor threads ``event_callback`` down.
+        if self.event_callback is not None:
+            self.event_callback(
+                "tool_result",
+                {"name": "fake_tool", "result": "fake_output"},
+            )
         return {
             "status": "success",
             "content": f"out:{user_message[:30]}",
@@ -330,9 +343,98 @@ def test_supervisor_event_callback_receives_workflow_events(monkeypatch):
         received.append((event_type, data))
 
     sup = Supervisor(llm=_NoopLLM(), workers=workers, workflow=steps, event_callback=cb)
+    # The Supervisor must forward the same callback object down to workers.
+    assert sup.worker_loops["r"].event_callback is cb
     sup.run(task="hi", session_id="")
     types = {t for t, _ in received}
     assert {"workflow_step_start", "workflow_step_end"}.issubset(types)
     # Two start + two end events = four workflow events total.
     workflow_events = [r for r in received if r[0].startswith("workflow_")]
     assert len(workflow_events) == 4
+    # The fake worker also emits a "tool_result" event from inside run(),
+    # proving the Supervisor actually threaded event_callback down to the
+    # worker AgentLoop (not just declared the kwarg).
+    worker_events = [r for r in received if r[0] == "tool_result"]
+    assert len(worker_events) == 2  # one per workflow step
+
+
+def test_supervisor_defaults_construct_without_bocha_api_key(monkeypatch):
+    """C2 regression: default Supervisor() must not raise when BOCHA_API_KEY is unset.
+
+    The historical ``_build_worker_registry`` silently skipped tools that
+    weren't available in the current environment. The brief's strict
+    ``ValueError`` regressed that behavior, breaking ``run-supervised`` on
+    any checkout without a BOCHA subscription. The current contract is
+    silent-skip with a debug log so the Supervisor continues to build with
+    whatever tools ARE available.
+    """
+    monkeypatch.delenv("BOCHA_API_KEY", raising=False)
+    _FakeAgentLoop.calls = []
+    monkeypatch.setattr("loop_agent.orchestration.supervisor.AgentLoop", _FakeAgentLoop)
+    # Must not raise.
+    sup = Supervisor(llm=_NoopLLM())
+    # research worker should exist; ``web_search`` is silently skipped.
+    assert "research" in sup.worker_loops
+    # writer worker depends only on built-in tools and is unaffected.
+    assert "writer" in sup.worker_loops
+
+
+def test_supervisor_load_skill_tool_honors_worker_skills_allow_list(monkeypatch):
+    """End-to-end: a worker with skills=['public'] cannot load 'sensitive'.
+
+    Regression for C1: the per-worker FilteredSkillsLoader must be threaded
+    into LoadSkillTool, not just ContextBuilder. Without that wiring the
+    LoadSkillTool falls back to a default SkillsLoader and bypasses the
+    allow-list entirely.
+    """
+    from loop_agent.agent.skills import Skill, SkillsLoader
+
+    # Force every SkillsLoader() construction to return a known snapshot
+    # with two skills so we can assert which one is reachable.
+    def _patched_loader(*args, **kwargs):
+        loader = SkillsLoader.__new__(SkillsLoader)
+        loader.skills = [
+            Skill(name="public", description="p", body="public body"),
+            Skill(name="sensitive", description="s", body="SENSITIVE_BODY"),
+        ]
+        loader.skills_dir = None
+        loader._user_skills_dir = None
+        return loader
+
+    monkeypatch.setattr(
+        "loop_agent.orchestration.supervisor.SkillsLoader", _patched_loader
+    )
+    monkeypatch.setattr(
+        "loop_agent.orchestration.filtered_skills.SkillsLoader", _patched_loader
+    )
+
+    workers = [
+        WorkerSpec(name="r", tools=["load_skill", "echo"], skills=["public"]),
+    ]
+    steps = [WorkflowStep("r", "{task}")]
+    sup = Supervisor(llm=_NoopLLM(), workers=workers, workflow=steps)
+
+    # The LoadSkillTool inside the worker must point at a FilteredSkillsLoader
+    # that has been narrowed to the allow-list.
+    worker = sup.worker_loops["r"]
+    tool = worker.registry.get("load_skill")
+    assert tool is not None
+    from loop_agent.orchestration.filtered_skills import FilteredSkillsLoader
+
+    assert isinstance(tool._loader, FilteredSkillsLoader)
+    assert {s.name for s in tool._loader.skills} == {"public"}
+
+    # Calling load_skill on a name outside the allow-list surfaces as an
+    # error tool result via the registry's exception wrapper.
+    import json as _json
+
+    result = _json.loads(worker.registry.execute("load_skill", {"name": "sensitive"}))
+    assert result["status"] == "error"
+    assert result["tool"] == "load_skill"
+    assert "sensitive" in result["error"]
+    assert "not available" in result["error"]
+
+    # An allowed name still works.
+    result_ok = _json.loads(worker.registry.execute("load_skill", {"name": "public"}))
+    assert result_ok["status"] == "ok"
+    assert "public body" in result_ok["content"]

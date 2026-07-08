@@ -124,22 +124,29 @@ class Supervisor:
         return FilteredSkillsLoader(full, allowed=set(allowed))
 
     def _build_workers(self) -> Dict[str, AgentLoop]:
-        registry = build_registry()
         loops: Dict[str, AgentLoop] = {}
         for spec in self._workers_specs:
-            filtered = ToolRegistry()
-            unknown: List[str] = []
-            for tool_name in spec.tools:
-                tool = registry.get(tool_name)
-                if tool is None:
-                    unknown.append(tool_name)
-                else:
-                    filtered.register(tool)
-            if unknown:
-                raise ValueError(
-                    f"WorkerSpec({spec.name!r}) references unknown tool(s): {unknown}"
-                )
             skills_loader = self._build_worker_skills_loader(spec.skills)
+            # Build a worker-scoped registry so ``LoadSkillTool`` reads from
+            # the same ``skills_loader`` that the ContextBuilder does. Without
+            # this the tool would fall back to a default ``SkillsLoader()``
+            # and bypass the worker's allow-list.
+            worker_registry = build_registry(skills_loader=skills_loader)
+            filtered = ToolRegistry()
+            for tool_name in spec.tools:
+                tool = worker_registry.get(tool_name)
+                if tool is None:
+                    # Silent skip: tools like ``web_search`` are only
+                    # registered when their backing API key is present.
+                    # Preserve backward-compat for default ``Supervisor()``
+                    # on machines that have not opted in.
+                    logger.debug(
+                        "WorkerSpec(%s) skips tool %s (not available)",
+                        spec.name,
+                        tool_name,
+                    )
+                    continue
+                filtered.register(tool)
             loops[spec.name] = AgentLoop(
                 filtered,
                 self.llm,
@@ -155,6 +162,12 @@ class Supervisor:
 
     def run(self, task: str, session_id: str = "") -> Dict[str, Any]:
         """Execute the workflow and return the final report.
+
+        When a step returns a non-success status, the workflow continues
+        with subsequent steps (using the failing step's content as the next
+        ``prev_output``); the aggregate status becomes ``partial``. To
+        short-circuit, inspect the step status in your own caller before
+        invoking subsequent steps.
 
         Returns:
             ``{status, content, run_id, run_dir, session_id}`` - same shape as
@@ -234,4 +247,4 @@ class Supervisor:
         try:
             cb(event_type, data)
         except Exception:  # noqa: BLE001 - never break the loop on a sink error
-            logger.debug("supervisor event sink raised", exc_info=True)
+            logger.warning("supervisor event sink raised", exc_info=True)
