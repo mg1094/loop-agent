@@ -30,3 +30,9 @@ Base: `0b01996` (Phase 2.2 final)
 - Corrected a plan bug: `stream_chat_events` now passes its generated `run_id` into `_run_agent_streaming` so queue events correlate.
 - Added `iteration_start` emission in `AgentLoop.run` to match the spec event table; this was a small deviation from the plan's "no loop.py changes" but necessary for spec compliance.
 - Final test count: 70 (57 Phase 2.2 + 13 new SSE tests).
+
+## Phase 3
+- Plan: docs/superpowers/plans/2026-07-08-loop-agent-phase3-supervisor-config.md
+- Spec: docs/superpowers/specs/2026-07-08-loop-agent-phase3-supervisor-config-design.md
+- Status: complete (5/5 implementation tasks done; T6 verification follows)
+- Tests: 106/106 passing
