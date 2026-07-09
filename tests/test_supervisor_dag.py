@@ -238,3 +238,71 @@ def test_supervisor_dag_workflow_backward_compat(make_sup):
     assert result["status"] == "success"
     assert len(_FakeAgentLoop.calls) == 2
     assert _FakeAgentLoop.calls[1]["user_message"] == "step2 out:step1 USER"
+
+
+def test_supervisor_dag_ambiguous_final_raises_at_construction(make_sup):
+    """Fan-out without fan-in: deepest layer has >1 instance; construction fails.
+
+    Regression test for the silent bug where ``Supervisor.run()`` used to
+    return ``_layers[-1][0].content`` arbitrarily when the deepest layer
+    had multiple competing sinks. We now refuse to build the Supervisor.
+    """
+    templates = [
+        StepTemplate(id="scout", worker="w", task_template="scout {task}"),
+    ]
+    instances = expand_fanout(
+        "scout",
+        [{"x": "A"}, {"x": "B"}, {"x": "C"}],
+        id_prefix="s",
+    )
+    with pytest.raises(ValueError, match="competing sinks"):
+        make_sup(templates, instances)
+
+
+def test_supervisor_dag_final_instance_id_selects_explicit_sink(make_sup):
+    """Passing final_instance_id lets a fan-out DAG converge to one sink.
+
+    The Supervisor should run normally; ``result['content']`` must come
+    from the instance named in ``final_instance_id``.
+    """
+    templates = [
+        StepTemplate(id="scout", worker="w", task_template="scout {x}: {task}"),
+    ]
+    instances = expand_fanout(
+        "scout",
+        [{"x": "A"}, {"x": "B"}, {"x": "C"}],
+        id_prefix="s",
+    )
+    sup = make_sup(templates, instances, final_instance_id="s_1")
+    result = sup.run(task="USER")
+    assert result["status"] == "success"
+    assert len(_FakeAgentLoop.calls) == 3
+    # The fake echoes ``user_message`` into ``out:<user_message>``; the
+    # final content must be the second scout instance's output (s_1).
+    assert "out:scout B: USER" == result["content"]
+
+
+def test_supervisor_dag_final_instance_id_not_a_sink_raises(make_sup):
+    """final_instance_id pointing at an intermediate node is a config error."""
+    templates = [
+        StepTemplate(id="root", worker="w", task_template="root: {task}"),
+        StepTemplate(id="leaf", worker="w", task_template="leaf: {root}"),
+    ]
+    instances = [
+        StepInstance(id="root_1", step="root"),
+        StepInstance(id="leaf_1", step="leaf", depends_on=["root_1"]),
+    ]
+    # ``root_1`` is in layer 0, not the deepest layer.
+    with pytest.raises(ValueError, match="not.*deepest topological layer"):
+        make_sup(templates, instances, final_instance_id="root_1")
+
+
+def test_supervisor_dag_final_instance_id_unknown_raises(make_sup):
+    """final_instance_id pointing at a non-existent id is rejected."""
+    templates = [
+        StepTemplate(id="root", worker="w", task_template="root: {task}"),
+    ]
+    instances = [StepInstance(id="root_1", step="root")]
+    with pytest.raises(ValueError, match="must be the id of an instance"):
+        make_sup(templates, instances, final_instance_id="does_not_exist")
+

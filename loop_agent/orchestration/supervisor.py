@@ -108,6 +108,14 @@ class Supervisor:
     DAG mode accepts ``templates`` and ``instances`` instead of ``workflow``.
     The DAG is executed in topological layers, with independent instances
     within a layer running in parallel via ``ThreadPoolExecutor``.
+
+    When the deepest topological layer converges to a single instance, its
+    output is returned as the final content. When the deepest layer has
+    multiple competing sinks (fan-out without fan-in), the caller MUST
+    disambiguate by passing ``final_instance_id`` at construction time;
+    otherwise building the Supervisor raises ``ValueError``.
+    ``final_instance_id``, when provided, must be the id of an instance
+    in the deepest layer (i.e. an actual sink with no dependents).
     """
 
     def __init__(
@@ -119,6 +127,7 @@ class Supervisor:
         instances: Optional[List[StepInstance]] = None,
         workflow: Optional[List[WorkflowStep]] = None,
         max_parallel: int = 4,
+        final_instance_id: Optional[str] = None,
         event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         if workers is not None and len(workers) == 0:
@@ -158,6 +167,7 @@ class Supervisor:
         )
         self._event_lock: threading.RLock = threading.RLock()
         self._max_parallel: int = max_parallel
+        self._final_instance_id: Optional[str] = final_instance_id
         self._worker_locks: Dict[str, threading.Lock] = {
             w.name: threading.Lock() for w in self._workers_specs
         }
@@ -202,6 +212,40 @@ class Supervisor:
                 steps.append(WorkflowStep(template.worker, template.task_template))
         return steps
 
+    def _validate_final_selection(self) -> None:
+        """Reject ambiguous final output, or validate the explicit override.
+
+        Rules:
+          * If ``final_instance_id`` is None and the deepest topological
+            layer contains more than one instance, raise ValueError naming
+            the competing sinks. This catches the silent-bug case where the
+            framework used to pick ``_layers[-1][0]`` arbitrarily.
+          * If ``final_instance_id`` is set, it must be the id of an
+            instance in the deepest layer. Anything else is a config error.
+        """
+        if not self._layers:
+            return
+        deepest_ids = [inst.id for inst in self._layers[-1]]
+        if self._final_instance_id is not None:
+            if self._final_instance_id not in deepest_ids:
+                raise ValueError(
+                    f"Supervisor.final_instance_id={self._final_instance_id!r} "
+                    f"must be the id of an instance in the deepest topological "
+                    f"layer (the sinks). Found competing sinks: {deepest_ids!r}. "
+                    f"Pick one of those ids, or restructure the DAG so it "
+                    f"converges to a single sink."
+                )
+            return
+        if len(deepest_ids) > 1:
+            raise ValueError(
+                f"Supervisor.run() returned the deepest-layer instance as the "
+                f"final output, but the deepest layer has {len(deepest_ids)} "
+                f"competing sinks: {deepest_ids!r}. This typically means "
+                f"fan-out without fan-in. Pick explicitly by passing "
+                f"final_instance_id=<one of {deepest_ids!r}>, or add a "
+                f"fan-in instance that depends on all of them."
+            )
+
     def _validate_and_build(
         self, templates: List[StepTemplate], instances: List[StepInstance]
     ) -> None:
@@ -238,6 +282,7 @@ class Supervisor:
         self._templates: Dict[str, StepTemplate] = template_by_id
         self._instances: List[StepInstance] = list(instances)
         self._layers: List[List[StepInstance]] = topological_layers(instances)
+        self._validate_final_selection()
         if self._workflow_from_dag:
             self.workflow = self._synthesize_workflow(self._templates)
         self.worker_loops: Dict[str, AgentLoop] = self._build_workers()
@@ -348,7 +393,12 @@ class Supervisor:
             if self._workflow_from_dag:
                 self._emit("workflow_layer_end", {"layer": layer_idx})
 
-        final_id = self._layers[-1][0].id if self._layers else None
+        if self._final_instance_id is not None:
+            final_id: Optional[str] = self._final_instance_id
+        elif self._layers:
+            final_id = self._layers[-1][0].id
+        else:
+            final_id = None
         return {
             "status": aggregate_status,
             "content": outputs.get(final_id, ""),
