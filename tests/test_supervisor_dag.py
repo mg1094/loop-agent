@@ -293,7 +293,7 @@ def test_supervisor_dag_final_instance_id_not_a_sink_raises(make_sup):
         StepInstance(id="leaf_1", step="leaf", depends_on=["root_1"]),
     ]
     # ``root_1`` is in layer 0, not the deepest layer.
-    with pytest.raises(ValueError, match="not.*deepest topological layer"):
+    with pytest.raises(ValueError, match="must be the id of an instance in the deepest topological layer"):
         make_sup(templates, instances, final_instance_id="root_1")
 
 
