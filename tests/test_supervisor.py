@@ -343,14 +343,18 @@ def test_supervisor_event_callback_receives_workflow_events(monkeypatch):
         received.append((event_type, data))
 
     sup = Supervisor(llm=_NoopLLM(), workers=workers, workflow=steps, event_callback=cb)
-    # The Supervisor must forward the same callback object down to workers.
-    assert sup.worker_loops["r"].event_callback is cb
     sup.run(task="hi", session_id="")
     types = {t for t, _ in received}
     assert {"workflow_step_start", "workflow_step_end"}.issubset(types)
     # Two start + two end events = four workflow events total.
     workflow_events = [r for r in received if r[0].startswith("workflow_")]
     assert len(workflow_events) == 4
+    # Workflow mode uses integer step indices and no instance_id.
+    for event_type, payload in workflow_events:
+        assert "instance_id" not in payload
+        assert isinstance(payload["step"], int)
+        assert payload["worker"] == "r"
+    assert sorted(d["step"] for _, d in workflow_events) == [0, 0, 1, 1]
     # The fake worker also emits a "tool_result" event from inside run(),
     # proving the Supervisor actually threaded event_callback down to the
     # worker AgentLoop (not just declared the kwarg).

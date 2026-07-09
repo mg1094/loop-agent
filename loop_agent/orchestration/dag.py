@@ -6,6 +6,7 @@ validation. Instances are treated as opaque nodes with ``.id`` and
 """
 from __future__ import annotations
 
+from collections import deque
 from typing import Any, Dict, Iterable, List, Set
 
 
@@ -41,10 +42,10 @@ def validate_dag(instances: Iterable[Any]) -> None:
             in_degree[inst.id] += 1
             dependents[dep].append(inst.id)
 
-    queue = [inst_id for inst_id, deg in in_degree.items() if deg == 0]
+    queue = deque([inst_id for inst_id, deg in in_degree.items() if deg == 0])
     removed: Set[str] = set()
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         removed.add(current)
         for dep_id in dependents[current]:
             in_degree[dep_id] -= 1

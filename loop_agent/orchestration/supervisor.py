@@ -158,6 +158,9 @@ class Supervisor:
         )
         self._event_lock: threading.RLock = threading.RLock()
         self._max_parallel: int = max_parallel
+        self._worker_locks: Dict[str, threading.Lock] = {
+            w.name: threading.Lock() for w in self._workers_specs
+        }
 
         # Eager validation so misconfigurations fail at construction time.
         self._validate_and_build(templates, instances)
@@ -189,7 +192,7 @@ class Supervisor:
         return templates, instances
 
     def _synthesize_workflow(
-        self, templates: Dict[str, StepTemplate], instances: List[StepInstance]
+        self, templates: Dict[str, StepTemplate]
     ) -> List[WorkflowStep]:
         """Derive a linear WorkflowStep list from a DAG for backward-compat readers."""
         steps: List[WorkflowStep] = []
@@ -234,10 +237,9 @@ class Supervisor:
 
         self._templates: Dict[str, StepTemplate] = template_by_id
         self._instances: List[StepInstance] = list(instances)
-        self._instances_by_id: Dict[str, StepInstance] = instance_by_id
         self._layers: List[List[StepInstance]] = topological_layers(instances)
         if self._workflow_from_dag:
-            self.workflow = self._synthesize_workflow(self._templates, self._instances)
+            self.workflow = self._synthesize_workflow(self._templates)
         self.worker_loops: Dict[str, AgentLoop] = self._build_workers()
 
     def _build_worker_skills_loader(self, allowed: List[str]) -> SkillsLoader:
@@ -279,10 +281,6 @@ class Supervisor:
                 skills_loader=skills_loader,
                 max_iterations=spec.max_iterations,
             )
-            # Expose the original user callback on the loop for introspection
-            # and tests; the actual emission goes through Supervisor._emit so
-            # that all events are serialized under self._event_lock.
-            loops[spec.name].event_callback = self._event_callback
         return loops
 
     # -- public API -----------------------------------------------------------
@@ -324,6 +322,7 @@ class Supervisor:
                         outputs,
                         session_id,
                         spec_by_name,
+                        layer_idx,
                     ): inst
                     for inst in layer
                 }
@@ -333,13 +332,17 @@ class Supervisor:
                     outputs[inst.id] = result.get("content") or ""
                     if result.get("status") != "success":
                         aggregate_status = "partial"
+                        warning_payload: Dict[str, Any] = {
+                            "step": layer_idx
+                            if not self._workflow_from_dag
+                            else inst.step,
+                            "status": result.get("status"),
+                        }
+                        if self._workflow_from_dag:
+                            warning_payload["instance_id"] = inst.id
                         self._emit(
                             "supervisor_step_warning",
-                            {
-                                "instance_id": inst.id,
-                                "step": inst.step,
-                                "status": result.get("status"),
-                            },
+                            warning_payload,
                         )
 
             if self._workflow_from_dag:
@@ -361,38 +364,53 @@ class Supervisor:
         outputs: Dict[str, str],
         session_id: str,
         spec_by_name: Dict[str, WorkerSpec],
+        layer_idx: int,
     ) -> Dict[str, Any]:
         template = self._templates[instance.step]
         task_text = self._render(template, instance, task, outputs)
 
-        self._emit(
-            "workflow_step_start",
-            {
+        start_payload: Dict[str, Any]
+        end_payload: Dict[str, Any]
+        if self._workflow_from_dag:
+            start_payload = {
                 "instance_id": instance.id,
                 "step": instance.step,
                 "worker": template.worker,
                 "task_preview": task_text[:200],
-            },
-        )
+            }
+        else:
+            start_payload = {
+                "step": layer_idx,
+                "worker": template.worker,
+                "task_preview": task_text[:200],
+            }
+        self._emit("workflow_step_start", start_payload)
 
         worker = self.worker_loops[template.worker]
         spec = spec_by_name[template.worker]
-        result = worker.run(
-            user_message=task_text,
-            session_id=session_id,
-            system_prompt=spec.system_prompt,
-        )
+        with self._worker_locks[template.worker]:
+            result = worker.run(
+                user_message=task_text,
+                session_id=session_id,
+                system_prompt=spec.system_prompt,
+            )
 
-        self._emit(
-            "workflow_step_end",
-            {
+        if self._workflow_from_dag:
+            end_payload = {
                 "instance_id": instance.id,
                 "step": instance.step,
                 "worker": template.worker,
                 "status": result.get("status"),
                 "content_preview": (result.get("content") or "")[:200],
-            },
-        )
+            }
+        else:
+            end_payload = {
+                "step": layer_idx,
+                "worker": template.worker,
+                "status": result.get("status"),
+                "content_preview": (result.get("content") or "")[:200],
+            }
+        self._emit("workflow_step_end", end_payload)
         return result
 
     def _render(

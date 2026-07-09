@@ -58,7 +58,16 @@ class WorkflowStep:
 
 @dataclass
 class StepTemplate:
-    """模板：声明一个 step 的形状（worker + 任务模板）。无运行时状态。"""
+    """Declaration of a reusable step shape (worker + task template).
+
+    Attributes:
+        id: Unique template identifier (referenced by ``StepInstance.step``).
+            Must not be empty or whitespace-only.
+        worker: The ``WorkerSpec.name`` that will execute instances of this
+            template.
+        task_template: A format string supporting ``{task}``, ``{prev_output}``,
+            dependency ids, and keys from ``StepInstance.user_vars``.
+    """
 
     id: str
     worker: str
@@ -75,10 +84,17 @@ class StepTemplate:
 
 @dataclass
 class StepInstance:
-    """运行时实例：模板的具体执行。
+    """Runtime node: a concrete execution of a ``StepTemplate``.
 
-    每个 instance 是 DAG 的一个节点；``depends_on`` 引用其他
-    ``StepInstance.id``。
+    Each instance is a node in the execution DAG. ``depends_on`` references
+    other ``StepInstance.id`` values.
+
+    Attributes:
+        id: Unique instance identifier within the DAG.
+        step: The ``StepTemplate.id`` to instantiate.
+        user_vars: Extra placeholder values available to the task template.
+        depends_on: List of upstream ``StepInstance.id`` values that must
+            complete before this instance runs.
     """
 
     id: str
@@ -102,7 +118,7 @@ def expand_fanout(
     items: List[Dict[str, str]],
     id_prefix: str,
 ) -> List[StepInstance]:
-    """把 ``items`` 列表展开成 N 个 StepInstance（1:1 fan-out）。"""
+    """Expand ``items`` into N independent ``StepInstance`` nodes (1:1 fan-out)."""
     if not isinstance(step, str) or not step.strip():
         raise ValueError("expand_fanout step must be a non-empty string")
     if not isinstance(id_prefix, str) or not id_prefix.strip():

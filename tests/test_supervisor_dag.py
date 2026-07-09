@@ -202,6 +202,28 @@ def test_supervisor_dag_events_include_layer_events(make_sup):
     assert "workflow_layer_end" in received
 
 
+def test_supervisor_dag_step_event_payload_shape(make_sup):
+    """DAG-mode workflow_step_start/end carry instance_id and string step."""
+    received = []
+
+    def cb(event_type, data):
+        received.append((event_type, data))
+
+    templates = [
+        StepTemplate(id="root", worker="w", task_template="root: {task}"),
+    ]
+    instances = [StepInstance(id="root_1", step="root")]
+    sup = make_sup(templates, instances, event_callback=cb)
+    sup.run(task="USER")
+
+    step_events = [d for t, d in received if t in ("workflow_step_start", "workflow_step_end")]
+    assert len(step_events) == 2
+    for payload in step_events:
+        assert payload["instance_id"] == "root_1"
+        assert payload["step"] == "root"
+        assert payload["worker"] == "w"
+
+
 def test_supervisor_dag_workflow_backward_compat(make_sup):
     """Phase 3 workflow=[WorkflowStep(...)] keeps working unchanged."""
     sup = Supervisor(
