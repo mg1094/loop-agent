@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![LangChain](https://img.shields.io/badge/LangChain-1.0+-green.svg)](https://python.langchain.com/)
-[![Tests](https://img.shields.io/badge/tests-135%20passed-brightgreen.svg)](#test)
+[![Tests](https://img.shields.io/badge/tests-140%20passed-brightgreen.svg)](#test)
 [![Code style](https://img.shields.io/badge/code%20style-clean-orange.svg)](#)
 
 A lightweight, provider-agnostic **ReAct agent framework** in Python — hand-written agent loop, auto-discovered tools, on-demand skill loading, and a pluggable LLM layer. Inspired by [Vibe-Trading](https://github.com), distilled down to the core building blocks for any agent use case, not just finance.
@@ -180,7 +180,7 @@ Custom workflows: pass `WorkerSpec` and `WorkflowStep` to `Supervisor(...)`. See
 pytest -v
 ```
 
-89 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, the BoCha web search tool, and supervisor multi-agent orchestration.
+140 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, the BoCha web search tool, supervisor multi-agent orchestration, and DAG fan-out/fan-in orchestration.
 
 ## Architecture
 

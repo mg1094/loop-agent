@@ -42,3 +42,22 @@ Base: `0b01996` (Phase 2.2 final)
 - Spec: docs/superpowers/specs/2026-07-09-phase4-dag-parallel.md
 - Status: complete
 - Tests: 135/135 passing
+
+## Phase 4 follow-up: reject ambiguous final sink
+
+- Status: complete (commits ``9a18fcb`` + ``3e2d293``)
+- Symptom: ``Supervisor.run()`` returned ``_layers[-1][0].content`` when
+  the deepest topological layer had multiple competing sinks (fan-out
+  without fan-in). The framework reported ``status="success"``, so the
+  silent bug surfaced only when callers compared the returned content
+  against the other sink outputs.
+- Fix:
+  - ``Supervisor(final_instance_id=...)`` lets callers disambiguate.
+  - ``_validate_final_selection()`` raises ``ValueError`` at construction
+    time when the deepest layer has multiple sinks and no
+    ``final_instance_id`` is supplied; it also rejects ids that are not
+    in the deepest layer.
+  - ``Supervisor.run()`` uses the explicit id when set, otherwise falls
+    back to the unique deepest-layer instance (backward compatible with
+    Phase 3 and earlier).
+- Tests: 4 new in ``tests/test_supervisor_dag.py``. 140/140 passing.
