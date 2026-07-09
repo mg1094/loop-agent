@@ -7,7 +7,7 @@ requires a new spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -54,3 +54,66 @@ class WorkflowStep:
 
     worker: str
     task_template: str
+
+
+@dataclass
+class StepTemplate:
+    """模板：声明一个 step 的形状（worker + 任务模板）。无运行时状态。"""
+
+    id: str
+    worker: str
+    task_template: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id.strip():
+            raise ValueError("StepTemplate.id must be a non-empty string")
+        if not isinstance(self.worker, str) or not self.worker.strip():
+            raise ValueError("StepTemplate.worker must be a non-empty string")
+        if not isinstance(self.task_template, str):
+            raise ValueError("StepTemplate.task_template must be a string")
+
+
+@dataclass
+class StepInstance:
+    """运行时实例：模板的具体执行。
+
+    每个 instance 是 DAG 的一个节点；``depends_on`` 引用其他
+    ``StepInstance.id``。
+    """
+
+    id: str
+    step: str
+    user_vars: Dict[str, str] = field(default_factory=dict)
+    depends_on: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id.strip():
+            raise ValueError("StepInstance.id must be a non-empty string")
+        if not isinstance(self.step, str) or not self.step.strip():
+            raise ValueError("StepInstance.step must reference a StepTemplate.id")
+        if not isinstance(self.user_vars, dict):
+            raise ValueError("StepInstance.user_vars must be a dict")
+        if not isinstance(self.depends_on, list):
+            raise ValueError("StepInstance.depends_on must be a list")
+
+
+def expand_fanout(
+    step: str,
+    items: List[Dict[str, str]],
+    id_prefix: str,
+) -> List[StepInstance]:
+    """把 ``items`` 列表展开成 N 个 StepInstance（1:1 fan-out）。"""
+    if not isinstance(step, str) or not step.strip():
+        raise ValueError("expand_fanout step must be a non-empty string")
+    if not isinstance(id_prefix, str) or not id_prefix.strip():
+        raise ValueError("expand_fanout id_prefix must be a non-empty string")
+    if not isinstance(items, list):
+        raise ValueError("expand_fanout items must be a list")
+    return [
+        StepInstance(
+            id=f"{id_prefix}_{i}",
+            step=step,
+            user_vars=item,
+        )
+        for i, item in enumerate(items)
+    ]
