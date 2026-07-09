@@ -164,7 +164,7 @@ def test_supervisor_dag_partial_status_on_failed_step(make_sup):
 
     templates = [
         StepTemplate(id="first", worker="w", task_template="first: {task}"),
-        StepTemplate(id="second", worker="w", task_template="second: {first}"),
+        StepTemplate(id="second", worker="w", task_template="second: {a}"),
     ]
     instances = [
         StepInstance(id="a", step="first"),
@@ -189,7 +189,7 @@ def test_supervisor_dag_events_include_layer_events(make_sup):
     templates = [
         StepTemplate(id="a", worker="w", task_template="a: {task}"),
         StepTemplate(id="b", worker="w", task_template="b: {task}"),
-        StepTemplate(id="c", worker="w", task_template="c: {a} {b}"),
+        StepTemplate(id="c", worker="w", task_template="c: {ia} {ib}"),
     ]
     instances = [
         StepInstance(id="ia", step="a"),

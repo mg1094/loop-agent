@@ -11,6 +11,7 @@ Public surface lives in this module and is re-exported from
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional
 
@@ -155,6 +156,7 @@ class Supervisor:
         self._event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = (
             event_callback
         )
+        self._event_lock: threading.RLock = threading.RLock()
         self._max_parallel: int = max_parallel
 
         # Eager validation so misconfigurations fail at construction time.
@@ -273,10 +275,14 @@ class Supervisor:
                 self.llm,
                 memory=WorkspaceMemory(),
                 session_store=self.session_store,
-                event_callback=self._event_callback,
+                event_callback=self._emit,
                 skills_loader=skills_loader,
                 max_iterations=spec.max_iterations,
             )
+            # Expose the original user callback on the loop for introspection
+            # and tests; the actual emission goes through Supervisor._emit so
+            # that all events are serialized under self._event_lock.
+            loops[spec.name].event_callback = self._event_callback
         return loops
 
     # -- public API -----------------------------------------------------------
@@ -339,7 +345,7 @@ class Supervisor:
             if self._workflow_from_dag:
                 self._emit("workflow_layer_end", {"layer": layer_idx})
 
-        final_id = self._instances[-1].id if self._instances else None
+        final_id = self._layers[-1][0].id if self._layers else None
         return {
             "status": aggregate_status,
             "content": outputs.get(final_id, ""),
@@ -399,13 +405,9 @@ class Supervisor:
         ctx: Dict[str, str] = {"task": task, "prev_output": ""}
         ctx.update(instance.user_vars)
         for dep_id in instance.depends_on:
-            dep_output = outputs.get(dep_id, f"[upstream failed: {dep_id}]")
-            ctx[dep_id] = dep_output
-            dep_inst = self._instances_by_id.get(dep_id)
-            if dep_inst is not None:
-                ctx[dep_inst.step] = dep_output
+            ctx[dep_id] = outputs.get(dep_id, f"[upstream failed: {dep_id}]")
         if len(instance.depends_on) == 1:
-            ctx["prev_output"] = outputs[instance.depends_on[0]]
+            ctx["prev_output"] = ctx[instance.depends_on[0]]
         try:
             return template.task_template.format(**ctx)
         except KeyError as exc:
@@ -426,11 +428,15 @@ class Supervisor:
         from inside workers and the supervisor-level
         ``workflow_step_start`` / ``workflow_step_end`` /
         ``supervisor_step_warning`` events emitted here.
+
+        All event emission is serialized with ``self._event_lock`` because
+        worker loops run in ``ThreadPoolExecutor`` threads.
         """
         cb = self._event_callback
         if cb is None:
             return
-        try:
-            cb(event_type, data)
-        except Exception:  # noqa: BLE001 - never break the loop on a sink error
-            logger.warning("supervisor event sink raised", exc_info=True)
+        with self._event_lock:
+            try:
+                cb(event_type, data)
+            except Exception:  # noqa: BLE001 - never break the loop on a sink error
+                logger.warning("supervisor event sink raised", exc_info=True)
