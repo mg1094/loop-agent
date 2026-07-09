@@ -7,6 +7,7 @@ from loop_agent.tools import build_registry
 def test_build_registry_has_echo():
     registry = build_registry()
     assert "echo" in registry
+    assert "compact" in registry
 
 
 def test_echo_tool():

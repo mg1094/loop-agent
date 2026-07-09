@@ -123,7 +123,7 @@ curl http://localhost:8000/sessions/demo
 curl -X DELETE http://localhost:8000/sessions/demo
 ```
 
-Sessions are stored in a local SQLite database at `<cwd>/.sessions/sessions.db`. Histories beyond 20 messages are truncated with a sentinel marker — older context is dropped, not summarized. Omit `session_id` for stateless single-turn requests.
+Sessions are stored in a local SQLite database at `<cwd>/.sessions/sessions.db`. Runtime context is compacted under token pressure: old tool results are pruned, long older messages are folded, and large histories are summarized into a handoff block while preserving recent context. The model can also call `compact(focus_topic=...)` to request compression explicitly. Omit `session_id` for stateless single-turn requests.
 
 ## Streaming
 

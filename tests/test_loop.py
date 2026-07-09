@@ -83,3 +83,33 @@ def test_loop_persists_messages_when_session_store_provided(tmp_path: Path):
     assert [m["content"] for m in loaded if m["role"] == "assistant"] == [
         "first reply", "second reply"
     ]
+
+
+def test_loop_handles_manual_compact_tool_call():
+    registry = ToolRegistry()
+    memory = WorkspaceMemory()
+
+    llm = MagicMock(spec=ChatLLM)
+    llm.chat.side_effect = [
+        LLMResponse(
+            tool_calls=[
+                ToolCallRequest(
+                    id="compact-1",
+                    name="compact",
+                    arguments={"focus_topic": "important topic"},
+                )
+            ],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(content="handoff summary", finish_reason="stop"),
+        LLMResponse(content="Done after compact", finish_reason="stop"),
+    ]
+
+    loop = AgentLoop(registry, llm, memory, max_iterations=5)
+    result = loop.run("keep going")
+
+    assert result["status"] == "success"
+    assert result["content"] == "Done after compact"
+    assert llm.chat.call_count == 3
+    summary_prompt = llm.chat.call_args_list[1].args[0][0]["content"]
+    assert "FOCUS TOPIC: important topic" in summary_prompt

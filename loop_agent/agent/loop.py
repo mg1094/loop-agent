@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
+from loop_agent.agent.compaction import ContextCompactor
 from loop_agent.agent.context import ContextBuilder
 from loop_agent.agent.memory import WorkspaceMemory
 from loop_agent.agent.skills import SkillsLoader
 from loop_agent.agent.tools import ToolRegistry
 from loop_agent.agent.trace import TraceWriter
-from loop_agent.agent.truncation import truncate_messages
 from loop_agent.providers.chat import ChatLLM
 
 if TYPE_CHECKING:
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 RUNS_DIR = Path("runs")
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "30"))
+TOKEN_THRESHOLD = int(os.getenv("TOKEN_THRESHOLD", "40000"))
 
 
 def _estimate_tokens(messages: list) -> int:
@@ -101,10 +102,8 @@ class AgentLoop:
         messages = context.build_messages(user_message, history=prior)
         if system_prompt is not None:
             messages[0]["content"] = system_prompt
-        # Capture user message in the persisted turn: the trailing user message
-        # is appended by build_messages, so back up one slot.
-        prefix_len = len(messages) - 1
-        messages = truncate_messages(messages)
+        new_turn_messages: List[Dict[str, Any]] = [{"role": "user", "content": user_message}]
+        compactor = ContextCompactor(self.llm, self.memory, token_threshold=TOKEN_THRESHOLD)
 
         trace = TraceWriter(run_dir)
         trace.write({"type": "start", "run_id": run_id, "prompt": user_message, "session_id": session_id})
@@ -117,12 +116,13 @@ class AgentLoop:
             while iteration < self.max_iterations:
                 if self._cancel_event.is_set():
                     trace.write({"type": "cancelled", "iter": iteration + 1})
-                    self._persist_new_turn(session_id, messages, prefix_len)
+                    self._persist_new_turn(session_id, new_turn_messages, 0)
                     return {"status": "cancelled", "content": "", "run_id": run_id, "run_dir": str(run_dir)}
 
                 iteration += 1
                 logger.info("ReAct iteration %d/%d", iteration, self.max_iterations)
                 self._emit("iteration_start", {"iteration": iteration})
+                compactor.compact_if_needed(messages, trace=trace, iteration=iteration)
 
                 is_last = iteration == self.max_iterations
                 tool_defs = None if is_last else self.registry.get_definitions()
@@ -139,30 +139,50 @@ class AgentLoop:
                     final_content = response.content or ""
                     if not final_content:
                         trace.write({"type": "empty_model_response", "iter": iteration})
-                        self._persist_new_turn(session_id, messages, prefix_len)
+                        self._persist_new_turn(session_id, new_turn_messages, 0)
                         return {"status": "empty", "content": "", "run_id": run_id, "run_dir": str(run_dir)}
-                    messages.append({"role": "assistant", "content": final_content})
+                    final_msg = {"role": "assistant", "content": final_content}
+                    messages.append(final_msg)
+                    new_turn_messages.append(final_msg)
                     trace.write({"type": "final", "iter": iteration, "content": final_content})
-                    self._persist_new_turn(session_id, messages, prefix_len)
+                    self._persist_new_turn(session_id, new_turn_messages, 0)
                     return {"status": "success", "content": final_content, "run_id": run_id, "run_dir": str(run_dir)}
 
                 assistant_msg = context.format_assistant_tool_calls(response.tool_calls)
                 messages.append(assistant_msg)
+                new_turn_messages.append(assistant_msg)
                 trace.write({"type": "assistant", "iter": iteration, "tool_calls": assistant_msg.get("tool_calls", [])})
 
                 for tc in response.tool_calls:
+                    if tc.name == "compact":
+                        tool_msg = context.format_tool_result(
+                            tc.id,
+                            tc.name,
+                            json.dumps({"status": "ok", "message": "Compressing..."}, ensure_ascii=False),
+                        )
+                        messages.append(tool_msg)
+                        new_turn_messages.append(tool_msg)
+                        trace.write({"type": "compact_requested", "iter": iteration})
+                        compactor.auto_compact(
+                            messages,
+                            trace=trace,
+                            focus_topic=str(tc.arguments.get("focus_topic", "")),
+                            iteration=iteration,
+                        )
+                        continue
                     result = self.registry.execute(tc.name, tc.arguments)
                     tool_msg = context.format_tool_result(tc.id, tc.name, result)
                     messages.append(tool_msg)
+                    new_turn_messages.append(tool_msg)
                     trace.write({"type": "tool_result", "iter": iteration, "name": tc.name, "content": result})
                     self.memory.increment(tc.name)
                     self._emit("tool_result", {"name": tc.name, "result": result})
 
-            self._persist_new_turn(session_id, messages, prefix_len)
+            self._persist_new_turn(session_id, new_turn_messages, 0)
             return {"status": "max_iterations", "content": final_content, "run_id": run_id, "run_dir": str(run_dir)}
 
         except Exception as exc:
             logger.exception("AgentLoop failed")
             trace.write({"type": "error", "error": str(exc)})
-            self._persist_new_turn(session_id, messages, prefix_len)
+            self._persist_new_turn(session_id, new_turn_messages, 0)
             return {"status": "error", "content": str(exc), "run_id": run_id, "run_dir": str(run_dir)}
