@@ -36,3 +36,9 @@ Base: `0b01996` (Phase 2.2 final)
 - Spec: docs/superpowers/specs/2026-07-08-loop-agent-phase3-supervisor-config-design.md
 - Status: complete (5/5 implementation tasks done; T6 verification follows)
 - Tests: 106/106 passing
+
+## Phase 4
+- Plan: docs/superpowers/plans/2026-07-09-loop-agent-phase4-dag-parallel.md
+- Spec: docs/superpowers/specs/2026-07-09-phase4-dag-parallel.md
+- Status: complete
+- Tests: 135/135 passing
