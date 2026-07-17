@@ -1,27 +1,41 @@
 import json
 from pathlib import Path
+from typing import List, Optional
 
 from loop_agent.agent.tools import BaseTool
+from loop_agent.tools.path_safety import safe_path
 
 
 class WriteFileTool(BaseTool):
     name = "write_file"
-    description = "Write content to a text file."
+    description = "Write content to a text file inside an allowed directory."
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File path"},
+            "path": {
+                "type": "string",
+                "description": "File path inside an allowed root.",
+            },
             "content": {"type": "string", "description": "Content to write"},
         },
         "required": ["path", "content"],
     }
     is_readonly = False
 
+    def __init__(self, allowed_roots: Optional[List[Path]] = None) -> None:
+        self._allowed_roots = list(allowed_roots) if allowed_roots else None
+
     def execute(self, *, path: str, content: str) -> str:
+        self._emit_progress(f"write_file: opening {path}")
+        resolved, ok, reason = safe_path(path, self._allowed_roots)
+        if not ok or resolved is None:
+            self._emit_progress(f"write_file: rejected ({reason})")
+            return json.dumps({"status": "error", "error": reason}, ensure_ascii=False)
         try:
-            p = Path(path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, encoding="utf-8")
-            return json.dumps({"status": "ok", "path": str(p)}, ensure_ascii=False)
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(content, encoding="utf-8")
+            self._emit_progress(f"write_file: wrote {len(content)} chars")
         except Exception as exc:
+            self._emit_progress(f"write_file: error {type(exc).__name__}")
             return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+        return json.dumps({"status": "ok", "path": str(resolved)}, ensure_ascii=False)

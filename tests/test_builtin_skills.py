@@ -7,3 +7,5 @@ def test_builtin_skills_loaded():
     assert "writing" in names
     assert "coding" in names
     assert "research" in names
+    assert "report-writing" in names
+    assert "code-review" in names

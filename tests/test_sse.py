@@ -44,8 +44,7 @@ def test_format_sse_event_does_not_newline_inside_json():
 
 
 def test_streaming_runner_emits_tool_result_events(monkeypatch):
-    """_run_agent_streaming pushes tool_result events into the shared queue."""
-    from loop_agent.api import sse as sse_mod
+    """_run_agent_streaming pushes tool_result events onto the supplied queue."""
     from loop_agent.api.sse import _run_agent_streaming
 
     def fake_loop_run(self, user_message, history=None, session_id=""):
@@ -56,28 +55,26 @@ def test_streaming_runner_emits_tool_result_events(monkeypatch):
     # Patch AgentLoop.run so we don't need a real LLM
     monkeypatch.setattr("loop_agent.api.sse.AgentLoop.run", fake_loop_run)
 
-    # Also stub _build_streaming_components so it returns benign objects —
-    # but since fake_loop_run replaces AgentLoop.run, the components only
-    # need to satisfy AgentLoop.__init__ (which we don't call because run is patched).
+    # Stub collaborators — we never call AgentLoop.run for real.
     monkeypatch.setattr(
         "loop_agent.api.sse._build_streaming_components",
         lambda: (None, None, None, None),
     )
 
-    result = _run_agent_streaming("hello", session_id="")
+    import queue as _q
+    my_queue = _q.Queue()
+    result = _run_agent_streaming("hello", session_id="", event_queue=my_queue)
     assert result["status"] == "success"
 
-    # Drain the queue, find our run_id's events
     drained = []
-    while not sse_mod.event_queue.empty():
-        drained.append(sse_mod.event_queue.get_nowait())
+    while not my_queue.empty():
+        drained.append(my_queue.get_nowait())
     types = [t for (_rid, t, _data) in drained if _rid == result["run_id"]]
     assert "tool_result" in types
 
 
 def test_streaming_runner_emits_iteration_start(monkeypatch):
     """AgentLoop iteration_start events are forwarded through the streaming runner."""
-    from loop_agent.api import sse as sse_mod
     from loop_agent.api.sse import _run_agent_streaming
 
     def fake_loop_run(self, user_message, history=None, session_id=""):
@@ -90,12 +87,14 @@ def test_streaming_runner_emits_iteration_start(monkeypatch):
         lambda: (None, None, None, None),
     )
 
-    result = _run_agent_streaming("hello", session_id="")
+    import queue as _q
+    my_queue = _q.Queue()
+    result = _run_agent_streaming("hello", session_id="", event_queue=my_queue)
     assert result["status"] == "success"
 
     drained = []
-    while not sse_mod.event_queue.empty():
-        drained.append(sse_mod.event_queue.get_nowait())
+    while not my_queue.empty():
+        drained.append(my_queue.get_nowait())
     iter_events = [d for (_rid, t, d) in drained if t == "iteration_start" and _rid == result["run_id"]]
     assert iter_events == [{"iteration": 1}]
 
@@ -147,18 +146,11 @@ async def _collect(gen):
 
 
 def test_stream_emits_run_start_then_final_then_done(monkeypatch):
-    # Patch _run_agent_streaming to push one tool_result and then done,
-    # bypassing the real AgentLoop. Use the run_id passed by the caller so
-    # events correlate with stream_chat_events' my_run_id.
-    import queue as _q
-
     from loop_agent.api import sse as sse_mod
 
-    monkeypatch.setattr("loop_agent.api.sse.event_queue", _q.Queue())
-
-    def fake_streaming(prompt, session_id="", run_id="rid1", **kwargs):
-        sse_mod.event_queue.put((run_id, "tool_result", {"name": "echo", "result": "hi"}))
-        sse_mod.event_queue.put((run_id, "__done__", {"status": "success", "content": "hi", "run_id": run_id, "run_dir": "/tmp"}))
+    def fake_streaming(prompt, session_id="", run_id=None, event_queue=None, **kwargs):
+        event_queue.put((run_id, "tool_result", {"name": "echo", "result": "hi"}))
+        event_queue.put((run_id, "__done__", {"status": "success", "content": "hi", "run_id": run_id, "run_dir": "/tmp"}))
         return {"status": "success", "content": "hi", "run_id": run_id, "run_dir": "/tmp"}
 
     monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
@@ -183,14 +175,10 @@ def test_stream_emits_run_start_then_final_then_done(monkeypatch):
 
 
 def test_stream_echoes_session_id_in_final(monkeypatch):
-    import queue as _q
-
     from loop_agent.api import sse as sse_mod
 
-    monkeypatch.setattr("loop_agent.api.sse.event_queue", _q.Queue())
-
-    def fake_streaming(prompt, session_id="", run_id="rid2", **kwargs):
-        sse_mod.event_queue.put((run_id, "__done__", {"status": "success", "content": "x", "run_id": run_id, "run_dir": "/tmp"}))
+    def fake_streaming(prompt, session_id="", run_id=None, event_queue=None, **kwargs):
+        event_queue.put((run_id, "__done__", {"status": "success", "content": "x", "run_id": run_id, "run_dir": "/tmp"}))
         return {"status": "success", "content": "x", "run_id": run_id, "run_dir": "/tmp"}
 
     monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
@@ -211,14 +199,10 @@ def test_stream_echoes_session_id_in_final(monkeypatch):
 
 
 def test_stream_emits_error_event_when_worker_raises(monkeypatch):
-    import queue as _q
-
     from loop_agent.api import sse as sse_mod
 
-    monkeypatch.setattr("loop_agent.api.sse.event_queue", _q.Queue())
-
-    def fake_streaming(prompt, session_id="", run_id="rid3", **kwargs):
-        sse_mod.event_queue.put((run_id, "__done__", {"status": "error", "content": "boom", "run_id": run_id, "run_dir": ""}))
+    def fake_streaming(prompt, session_id="", run_id=None, event_queue=None, **kwargs):
+        event_queue.put((run_id, "__done__", {"status": "error", "content": "boom", "run_id": run_id, "run_dir": ""}))
         raise RuntimeError("boom")
 
     monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
@@ -347,4 +331,48 @@ def test_stream_oversized_session_id_returns_422():
         "/chat/stream", json={"prompt": "hi", "session_id": "x" * 257}
     )
     assert resp.status_code == 422
+def test_concurrent_streaming_clients_dont_cross_talk(monkeypatch):
+    """Two parallel stream() calls must not see each other's events.
+
+    Regression guard for the shared-queue bug: previously the drain loop
+    busy-spun while re-queuing foreign events back into the same FIFO, and
+    one client could observe another client's tool_result.
+    """
+    from loop_agent.api import sse as sse_mod
+
+    inboxes: dict[str, list] = {"a": [], "b": []}
+
+    def fake_streaming(prompt, session_id="", run_id=None, event_queue=None, **kwargs):
+        tag = prompt  # use prompt as a tag so we can identify the caller
+        inbox = inboxes[tag]
+        inbox.append(("run_id", run_id))
+        event_queue.put((run_id, "tool_result", {"name": "echo", "result": tag}))
+        event_queue.put(
+            (run_id, "__done__", {"status": "success", "content": tag, "run_id": run_id, "run_dir": "/tmp"})
+        )
+        return {"status": "success", "content": tag, "run_id": run_id, "run_dir": "/tmp"}
+
+    monkeypatch.setattr("loop_agent.api.sse._run_agent_streaming", fake_streaming)
+
+    async def collect(prompt):
+        out = []
+        async for chunk in sse_mod.stream_chat_events(prompt, session_id=""):
+            for line in chunk.split("\n"):
+                if line.startswith("data:"):
+                    out.append(json.loads(line[len("data:"):].strip()))
+        return out
+
+    async def run_both():
+        return await asyncio.gather(collect("a"), collect("b"))
+
+    a_events, b_events = asyncio.run(run_both())
+
+    def tool_results_for(events, tag):
+        return [e for e in events if e.get("type") == "tool_result" and e.get("result") == tag]
+
+    assert len(tool_results_for(a_events, "a")) == 1
+    assert len(tool_results_for(b_events, "b")) == 1
+    # No cross-talk: a's stream never sees a tool_result whose payload belongs to b.
+    assert tool_results_for(a_events, "b") == []
+    assert tool_results_for(b_events, "a") == []
 

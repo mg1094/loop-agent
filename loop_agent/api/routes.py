@@ -8,8 +8,12 @@ from loop_agent.api.schemas import (
     ChatRequest,
     ChatResponse,
     HealthResponse,
+    SearchHit,
     SessionDeleteResponse,
+    SessionListResponse,
     SessionMessagesResponse,
+    SessionSearchResponse,
+    SessionSummary,
     SkillsResponse,
     ToolsResponse,
 )
@@ -53,6 +57,22 @@ def chat(req: ChatRequest) -> ChatResponse:
     )
 
 
+@router.get("/sessions", response_model=SessionListResponse)
+def list_sessions_route() -> SessionListResponse:
+    rows = _store().list_sessions_with_meta()
+    return SessionListResponse(
+        sessions=[SessionSummary(**row) for row in rows]
+    )
+
+
+@router.get("/sessions/search", response_model=SessionSearchResponse)
+def search_sessions_route(q: str = "", limit: int = 25) -> SessionSearchResponse:
+    hits = _store().search_sessions(q, limit=limit)
+    return SessionSearchResponse(query=q, hits=[SearchHit(**row) for row in hits])
+
+
+# Literal-path routes MUST register before the catch-all
+# ``/sessions/{session_id}`` so FastAPI doesn't treat "search" as an id.
 @router.get("/sessions/{session_id}", response_model=SessionMessagesResponse)
 def get_session(session_id: str) -> SessionMessagesResponse:
     messages = _store().load_messages(session_id)

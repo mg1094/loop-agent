@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Optional
 
 from loop_agent.agent.loop import AgentLoop
 from loop_agent.cli.commands import _build_streaming_components
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -33,18 +36,33 @@ def format_sse_event(
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-# Single shared queue for all streaming runs. Items are (run_id, event_type, data).
-event_queue: "queue.Queue[Tuple[str, str, Dict[str, Any]]]" = queue.Queue()
+# Module-level queue kept only as a default fallback when neither the
+# streaming entry point nor its caller supply one. ``stream_chat_events``
+# creates a per-request queue, which is the path used in production.
+event_queue: "queue.Queue" = queue.Queue()
 
 
 def _run_agent_streaming(
-    prompt: str, session_id: str = "", run_id: Optional[str] = None
+    prompt: str,
+    session_id: str = "",
+    run_id: Optional[str] = None,
+    event_queue: Optional["queue.Queue"] = None,
 ) -> Dict[str, Any]:
-    """Run an AgentLoop and forward its events into event_queue.
+    """Run an AgentLoop and forward events onto ``event_queue``.
 
-    Returns the same dict shape as cli.commands._run_agent, but with the
-    streaming-runner-generated ``run_id`` overlaid so consumers can match
-    events in ``event_queue`` to the final result.
+    Each call uses its own queue by default — no module-level shared state.
+    The ``stream_chat_events`` side creates a per-request queue so concurrent
+    clients don't see each other's events and the drain loop can't busy-spin
+    re-queuing foreign events back into the same FIFO.
+
+    Args:
+        prompt: User prompt.
+        session_id: Optional session ID for cross-turn context.
+        run_id: Optional caller-supplied run id; one is generated if absent.
+        event_queue: Optional queue that receives ``(run_id, event_type, data)``
+            tuples. When omitted, an isolated per-call queue is created and
+            events are dropped on the floor. Tests that want to inspect
+            streamed events should pass their own queue.
     """
     registry, llm, memory, store = _build_streaming_components()
     if run_id is None:
@@ -52,16 +70,25 @@ def _run_agent_streaming(
             datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_")
             + uuid.uuid4().hex[:6]
         )
+    if event_queue is None:
+        # No consumer attached: create an isolated queue but never read it,
+        # so callbacks can fire without blocking the worker thread.
+        event_queue = queue.Queue()
 
     def _callback(event_type: str, data: Dict[str, Any]) -> None:
         event_queue.put((run_id, event_type, data))
 
     loop = AgentLoop(
-        registry, llm, memory, event_callback=_callback, session_store=store
+        registry,
+        llm,
+        memory,
+        event_callback=_callback,
+        session_store=store,
     )
     try:
         result = loop.run(prompt, session_id=session_id)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("streaming runner failed")
         result = {
             "status": "error",
             "content": str(exc),
@@ -79,29 +106,24 @@ def _run_agent_streaming(
 def stream_chat_events(prompt: str, session_id: str = "") -> AsyncIterator[str]:
     """Async generator yielding SSE-formatted event lines for a single run.
 
-    Spawns a worker thread running ``_run_agent_streaming`` and forwards its
-    queue events to the async side. Yields the ``run_start`` event first, then
-    forwarded tool events, then a ``final`` event (or ``error`` on failure),
-    then exits.
-
-    Note: this is a regular function (not ``async def``) that returns an
-    async generator. FastAPI's ``StreamingResponse`` accepts an async
-    iterable directly, and the test suite iterates it via ``async for`` on
-    the returned object.
+    Each call creates its own queue and worker thread; concurrent clients no
+    longer contend on a shared event FIFO.
     """
 
     async def _drain_queue_until_done(
-        my_run_id: str,
+        my_run_id: str, my_queue: "queue.Queue"
     ) -> AsyncIterator[Dict[str, Any]]:
         loop = asyncio.get_running_loop()
         while True:
             # Pull from the synchronous queue without blocking the event loop.
             rid, event_type, payload = await loop.run_in_executor(
-                None, event_queue.get
+                None, my_queue.get
             )
+            # With per-request queues the rid guard is defensive only.
             if rid != my_run_id:
-                # Not ours — re-queue and keep waiting.
-                event_queue.put((rid, event_type, payload))
+                logger.warning(
+                    "discarding foreign event rid=%s type=%s", rid, event_type
+                )
                 continue
             if event_type == "__done__":
                 return
@@ -115,12 +137,18 @@ def stream_chat_events(prompt: str, session_id: str = "") -> AsyncIterator[str]:
             datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_")
             + uuid.uuid4().hex[:6]
         )
+        # Per-request queue — the worker thread only writes here, and the
+        # drain loop only reads here. No global FIFO to re-queue against.
+        my_queue: "queue.Queue" = queue.Queue()
         thread_result: Dict[str, Any] = {}
 
         def worker() -> None:
             try:
                 thread_result["result"] = _run_agent_streaming(
-                    prompt, session_id=session_id, run_id=my_run_id
+                    prompt,
+                    session_id=session_id,
+                    run_id=my_run_id,
+                    event_queue=my_queue,
                 )
             except Exception as exc:  # noqa: BLE001
                 thread_result["error"] = exc
@@ -141,7 +169,7 @@ def stream_chat_events(prompt: str, session_id: str = "") -> AsyncIterator[str]:
         )
 
         # 2) forward forwarded events until __done__ for our run_id
-        async for ev in _drain_queue_until_done(my_run_id):
+        async for ev in _drain_queue_until_done(my_run_id, my_queue):
             seq += 1
             yield format_sse_event(
                 event_type=ev["type"],

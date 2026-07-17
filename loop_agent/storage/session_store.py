@@ -123,3 +123,67 @@ class SessionStore:
                 "SELECT session_id FROM sessions ORDER BY updated_at DESC"
             )
             return [row["session_id"] for row in cur.fetchall()]
+
+    def list_sessions_with_meta(self) -> List[Dict[str, Any]]:
+        """Return ``{session_id, message_count, updated_at, created_at}`` for every session.
+
+        Cheap to compute because SQLite gives us COUNT and ORDER BY in one
+        scan, with the existing ``session_messages`` index on
+        ``(session_id, seq)``.
+        """
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT s.session_id, s.created_at, s.updated_at,
+                       COUNT(m.id) AS message_count
+                FROM sessions s
+                LEFT JOIN session_messages m ON m.session_id = s.session_id
+                GROUP BY s.session_id
+                ORDER BY s.updated_at DESC
+                """
+            )
+            return [
+                {
+                    "session_id": row["session_id"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "message_count": row["message_count"],
+                }
+                for row in cur.fetchall()
+            ]
+
+    def search_sessions(
+        self, query: str, limit: int = 25
+    ) -> List[Dict[str, Any]]:
+        """Find sessions whose messages contain ``query`` as a substring.
+
+        Substring-based: we trade FTS5 speed for portability (no extra
+        ``pysqlite3-binary`` install) and call out the limit in the response.
+        ``limit`` caps the number of distinct sessions returned, not the
+        number of messages scanned.
+        """
+        if not query or not query.strip():
+            return []
+        limit = max(1, min(200, int(limit)))
+        like = f"%{query.strip()}%"
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT s.session_id, s.updated_at, COUNT(m.id) AS hits
+                FROM sessions s
+                JOIN session_messages m ON m.session_id = s.session_id
+                WHERE m.content LIKE ?
+                GROUP BY s.session_id
+                ORDER BY hits DESC, s.updated_at DESC
+                LIMIT ?
+                """,
+                (like, limit),
+            )
+            return [
+                {
+                    "session_id": row["session_id"],
+                    "updated_at": row["updated_at"],
+                    "match_count": row["hits"],
+                }
+                for row in cur.fetchall()
+            ]

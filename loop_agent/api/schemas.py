@@ -37,3 +37,25 @@ class SessionMessagesResponse(BaseModel):
 class SessionDeleteResponse(BaseModel):
     session_id: str
     deleted: bool
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    created_at: str
+    updated_at: str
+    message_count: int
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+
+
+class SearchHit(BaseModel):
+    session_id: str
+    updated_at: str
+    match_count: int
+
+
+class SessionSearchResponse(BaseModel):
+    query: str
+    hits: list[SearchHit]

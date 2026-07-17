@@ -47,10 +47,14 @@ def build_registry(
     *,
     skills_loader: "SkillsLoader | None" = None,
     event_callback: Callable[[str, dict], None] | None = None,
+    allowed_roots: list[Path] | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
 ) -> ToolRegistry:
     from loop_agent.tools.load_skill_tool import LoadSkillTool
+    from loop_agent.tools.read_file_tool import ReadFileTool
+    from loop_agent.tools.write_file_tool import WriteFileTool
 
-    registry = ToolRegistry()
+    registry = ToolRegistry(on_progress=on_progress)
     for cls in _discover_subclasses():
         try:
             if getattr(cls, "skip_auto_register", False):
@@ -60,6 +64,10 @@ def build_registry(
                 continue
             if cls is LoadSkillTool:
                 registry.register(cls(skills_loader=skills_loader))
+            elif cls is ReadFileTool:
+                registry.register(cls(allowed_roots=allowed_roots))
+            elif cls is WriteFileTool:
+                registry.register(cls(allowed_roots=allowed_roots))
             else:
                 registry.register(cls())
         except Exception as exc:

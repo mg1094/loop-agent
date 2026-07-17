@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![LangChain](https://img.shields.io/badge/LangChain-1.0+-green.svg)](https://python.langchain.com/)
-[![Tests](https://img.shields.io/badge/tests-140%20passed-brightgreen.svg)](#test)
+[![Tests](https://img.shields.io/badge/tests-201%20passed-brightgreen.svg)](#test)
 [![Code style](https://img.shields.io/badge/code%20style-clean-orange.svg)](#)
 
 A lightweight, provider-agnostic **ReAct agent framework** in Python — hand-written agent loop, auto-discovered tools, on-demand skill loading, and a pluggable LLM layer. Inspired by [Vibe-Trading](https://github.com), distilled down to the core building blocks for any agent use case, not just finance.
@@ -54,6 +54,23 @@ BOCHA_API_KEY=your-bocha-api-key  # optional, enables web_search tool
 
 Supported providers: `openai`, `deepseek`, `dashscope`/`qwen`, `moonshot`, `gemini`, `groq`, `ollama`.
 
+### CORS for browser clients
+
+The HTTP server ships with a CORS middleware that defaults to **localhost only**:
+
+- `http://localhost:*`
+- `http://127.0.0.1:*`
+- `https://localhost:*`
+- `https://127.0.0.1:*`
+
+This is enough for a local Vite / Next.js dev server to call `/chat` and `/chat/stream`. To allow a deployed origin, set:
+
+```bash
+export LOOP_AGENT_CORS_ORIGINS="https://app.example.com,https://admin.example.com"
+```
+
+Credentials and SSE headers are already enabled. Unknown origins receive a `400 Bad Request` on preflight.
+
 ## Usage
 
 ```bash
@@ -61,6 +78,27 @@ loop-agent run "Use the echo tool to say hello"
 loop-agent skills
 loop-agent tools
 ```
+
+Additional CLI commands:
+
+```bash
+loop-agent --version
+
+# Sessions
+loop-agent sessions list
+loop-agent sessions search serverless --limit 10
+loop-agent sessions delete demo
+
+# Run a single tool for quick debugging
+loop-agent tools run echo --arg message=hello
+
+# Replay a run trace in human-readable form
+loop-agent trace 20260709_120000_abcdef
+# or just the suffix if it's unique
+loop-agent trace abcdef
+```
+
+The `trace` command reads `runs/<run_id>/trace.jsonl` and prints each entry on one line. `tool_error` entries are highlighted so failed tool calls stand out from ordinary `tool_result` lines.
 
 ## HTTP API
 
@@ -125,6 +163,51 @@ curl -X DELETE http://localhost:8000/sessions/demo
 
 Sessions are stored in a local SQLite database at `<cwd>/.sessions/sessions.db`. Runtime context is compacted under token pressure: old tool results are pruned, long older messages are folded, and large histories are summarized into a handoff block while preserving recent context. The model can also call `compact(focus_topic=...)` to request compression explicitly. Omit `session_id` for stateless single-turn requests.
 
+### Session list & search
+
+```bash
+# All sessions, most-recently-updated first
+curl http://localhost:8000/sessions
+# -> {"sessions": [{"session_id": "demo", "created_at": "...", "updated_at": "...", "message_count": 4}, ...]}
+
+# Substring search across all session messages
+curl 'http://localhost:8000/sessions/search?q=serverless&limit=10'
+# -> {"query": "serverless", "hits": [{"session_id": "beta", "updated_at": "...", "match_count": 2}, ...]}
+```
+
+`limit` is clamped to `[1, 200]` server-side. Matches are case-insensitive (`LIKE`) and ranked by `match_count` then `updated_at`. Future versions may upgrade to SQLite FTS5 without breaking the API surface.
+
+## Sandbox (file tools)
+
+`read_file` and `write_file` are sandboxed by default to two roots:
+
+- `<cwd>` — wherever you launched the agent from
+- `<cwd>/runs` — agent output, one folder per `run_id`
+
+Paths are resolved symlink-aware before the check, so `../` escapes and bind-mount attempts both fail with `"path X is outside allowed roots: ..."`. A small built-in deny-list also blocks reads against `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.loop-agent/.env`, `/etc/`, and `/var/run/`. To opt back into legacy unbounded behaviour, set:
+
+```bash
+export LOOP_AGENT_UNRESTRICTED_FILES=1
+```
+
+Custom registries (e.g. inside your own scripts) can pass their own allow-list:
+
+```python
+from pathlib import Path
+from loop_agent.tools import build_registry
+
+registry = build_registry(allowed_roots=[Path("/data/projects")])
+```
+
+## LLM retries
+
+`ChatLLM.chat()` and `stream_chat()` retry transient failures with exponential backoff + full jitter:
+
+- Retryable: HTTP `408`, `429`, `5xx`, no-status network errors, `ConnectionError`, `TimeoutError`
+- Not retried: other `4xx` (auth, bad request, etc.) — surfaced immediately
+- Defaults: 3 retries, base delay 0.5s, max delay 8s
+- Honors `should_cancel` between attempts; forwards an `on_retry(attempt, exc, jitter)` hook for observability
+- Override per call: `llm.chat(messages, max_retries=5, base_delay=1.0, max_delay=16.0)`
 ## Streaming
 
 `/chat/stream` returns `text/event-stream` so clients see per-iteration progress instead of waiting for the full run.
@@ -142,10 +225,15 @@ Events emitted (one `data: <json>\n\n` line each, envelope fields at top level):
 | `run_start`       | First event                         |
 | `iteration_start` | Each ReAct loop iteration begins    |
 | `tool_result`     | Each tool call finishes             |
+| `tool_progress`   | Per-phase progress from a long tool |
 | `final`           | Run finished — mirrors `/chat`      |
 | `error`           | Only on unrecoverable exception     |
 
 `final` always carries `status`, `content`, `run_id`, `run_dir`, and `session_id` — same shape as `POST /chat`'s JSON response. Session persistence behavior matches `/chat`: pass `session_id`, prior messages are loaded and the new turn is saved.
+
+`tool_progress` is emitted by tools that take more than a fraction of a second — currently `web_search` (sending query / response received / parsed N results), and `read_file` / `write_file` (opening / N chars / rejected). Short tools stay silent. Each event carries `{name: "<tool>", phase: "<message>"}`.
+
+Concurrent `/chat/stream` clients see only their own events: each request gets its own queue and worker thread, not a shared module-level FIFO (which used to busy-spin on foreign events).
 
 ## Multi-Agent Orchestration
 
@@ -180,7 +268,7 @@ Custom workflows: pass `WorkerSpec` and `WorkflowStep` to `Supervisor(...)`. See
 pytest -v
 ```
 
-140 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, the BoCha web search tool, supervisor multi-agent orchestration, and DAG fan-out/fan-in orchestration.
+201 tests cover tools, skills, context assembly, providers, trace writer, the agent loop, CLI commands, the HTTP API, persistent sessions, message truncation, streaming SSE, the BoCha web search tool, supervisor multi-agent orchestration, DAG fan-out/fan-in orchestration, the file-tools sandbox, session list/search, ChatLLM retry/backoff, tool-progress emission, tool_error trace records, CLI session/tool/trace commands, and CORS handling for browser clients.
 
 ## Architecture
 
@@ -257,7 +345,13 @@ The agent can now call `load_skill("my-skill")` to read the full body.
 
 - [x] Streaming responses with proper SSE
 - [ ] MCP server entry
+- [x] File-tool sandbox with allow-list + deny-list
+- [x] Session list + substring search API
+- [x] LLM retry/backoff for transient failures
+- [x] Tool-progress events for long-running tools
 - [x] Multi-agent orchestration
+- [x] CLI session / tool / trace ergonomics
+- [x] tool_error trace records for failed tool calls
 
 ## License
 

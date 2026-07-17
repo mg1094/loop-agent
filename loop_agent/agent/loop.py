@@ -49,6 +49,19 @@ class AgentLoop:
         self._cancel_event = threading.Event()
         self.session_store = session_store
         self._skills_loader = skills_loader
+        # If a consumer wired an event callback (typically SSE) AND the
+        # registry supports the progress hook, route tool progress into
+        # the same channel as ``tool_result`` so clients see a
+        # ``tool_progress`` event per phase of long-running tools.
+        # Tests sometimes pass a stub registry, so guard with hasattr.
+        if event_callback is not None and hasattr(
+            self.registry, "set_on_progress"
+        ):
+            self.registry.set_on_progress(
+                lambda name, phase: event_callback(
+                    "tool_progress", {"name": name, "phase": phase}
+                )
+            )
 
     def cancel(self) -> None:
         self._cancel_event.set()
@@ -170,11 +183,30 @@ class AgentLoop:
                             iteration=iteration,
                         )
                         continue
-                    result = self.registry.execute(tc.name, tc.arguments)
+                    result = self.registry.execute(
+                        tc.name,
+                        tc.arguments,
+                        on_error=lambda exc_type, exc_msg: trace.write(
+                            {
+                                "type": "tool_error",
+                                "iter": iteration,
+                                "name": tc.name,
+                                "error": exc_msg,
+                                "exception_type": exc_type,
+                            }
+                        ),
+                    )
                     tool_msg = context.format_tool_result(tc.id, tc.name, result)
                     messages.append(tool_msg)
                     new_turn_messages.append(tool_msg)
-                    trace.write({"type": "tool_result", "iter": iteration, "name": tc.name, "content": result})
+                    trace.write(
+                        {
+                            "type": "tool_result",
+                            "iter": iteration,
+                            "name": tc.name,
+                            "content": result,
+                        }
+                    )
                     self.memory.increment(tc.name)
                     self._emit("tool_result", {"name": tc.name, "result": result})
 

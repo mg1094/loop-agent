@@ -71,6 +71,7 @@ class WebSearchTool(BaseTool):
             "summary": bool(summary),
         }
 
+        self._emit_progress(f"web_search: sending query {query!r}")
         try:
             with httpx.Client(timeout=30) as client:
                 response = client.post(
@@ -83,7 +84,9 @@ class WebSearchTool(BaseTool):
                 )
                 response.raise_for_status()
                 data = response.json()
+                self._emit_progress("web_search: response received")
         except httpx.HTTPStatusError as exc:
+            self._emit_progress(f"web_search: HTTP {exc.response.status_code}")
             return json.dumps(
                 {
                     "status": "error",
@@ -93,17 +96,20 @@ class WebSearchTool(BaseTool):
                 ensure_ascii=False,
             )
         except httpx.RequestError as exc:
+            self._emit_progress("web_search: network error")
             return json.dumps(
                 {"status": "error", "error": f"Request failed: {exc}"},
                 ensure_ascii=False,
             )
         except Exception as exc:  # noqa: BLE001
+            self._emit_progress(f"web_search: error {type(exc).__name__}")
             return json.dumps(
                 {"status": "error", "error": str(exc)},
                 ensure_ascii=False,
             )
 
         if data.get("code") != 200:
+            self._emit_progress(f"web_search: BoCha code {data.get('code')}")
             return json.dumps(
                 {
                     "status": "error",
@@ -122,6 +128,7 @@ class WebSearchTool(BaseTool):
             }
             for page in web_pages
         ]
+        self._emit_progress(f"web_search: parsed {len(results)} results")
 
         return json.dumps(
             {
